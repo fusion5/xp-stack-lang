@@ -65,10 +65,10 @@ mainASM = do
 
 assembly = do
     elf64Header $ programHeader vaddr_offset mainASM 
+    replaceProgSizeWithBytes
     replaceLabelsWithBytes vaddr_offset
     documentation "The string section with all collected strings:"
     emitStrings
-    replaceProgSizeWithBytes
         where vaddr_offset = 0xC0000000
 
 doAction f = 

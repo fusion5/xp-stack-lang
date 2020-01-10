@@ -4,6 +4,9 @@ import Data.Word
 
 import ASM.ASM
 import ASM.Datatypes
+import Data.Binary.Put
+
+emit = bemit . map SWord8
 
 -- https://en.wikipedia.org/wiki/Executable_and_Linkable_Format
 elf64Header :: ASM () -> ASM ()
@@ -26,6 +29,7 @@ elf64Header body = do
     e_shstrndx
     assertOffsetIs 0x40 "The 64-bit header length has length 0x40"
     setLabel "end_elf64_head"
+    bflush
     body
     setLabel "end_file"
     where 
@@ -76,8 +80,8 @@ programHeader
         p_type   = emit [0x01, 0x00, 0x00, 0x00]
         p_flags  = emit [0x05, 0x00, 0x00, 0x00]
         p_offset = emit [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-        p_vaddr  = emitWord64LE mem_offset
-        p_paddr  = emitWord64LE mem_offset
+        p_vaddr  = emit $ bytes putWord64le mem_offset
+        p_paddr  = emit $ bytes putWord64le mem_offset
         -- p_vaddr  = emit [0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00]
         -- p_paddr  = emit [0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00]
         p_filesz = emitProgSize64

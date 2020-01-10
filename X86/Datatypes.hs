@@ -42,7 +42,17 @@ data Val         -- Corresponds to addressing methods
           Integer -- Offset
   | L64   String  -- Label
   | S64   String  -- Reference to the strings table
-  deriving (Eq, Show)
+  deriving (Eq)
+
+instance Show Val where
+    show (I64 w64)  = show w64
+    show (I32 w32)  = show w32
+    show (I8  w8)   = show w8
+    show (R64 r)    = show r
+    show (R8 r)     = show r
+    show (RR64 r o) = "[" ++ show r ++ "+" ++ show o ++ "]"
+    show (L64 s)    = s
+    show (S64 s)    = s
 
 data Reg64
   = RAX  -- Accumulator

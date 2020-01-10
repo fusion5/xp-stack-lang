@@ -11,12 +11,14 @@ import Data.Binary.Put
 import qualified Data.ByteString.Internal as BS (c2w, w2c)
 import Data.ByteString.Lazy.Char8 (ByteString, unpack, split)
 import Data.Int
+import Data.List (intercalate)
 
 import ASM.Datatypes
 
 ascii :: Char -> Word8
 ascii = fromIntegral . ord
 
+{-
 emit :: [Word8] -> ASM ()
 emit = emits . Prelude.map SWord8
 
@@ -24,18 +26,19 @@ emits :: [ASMEmit String] -> ASM ()
 emits xs = do
     s <- get
     modify $ append $ ASMEmit (asm_offset s) xs
+-}
 
 emitStringRef :: String -> ASM ()
-emitStringRef x = emits [SStrRef64 x]
+emitStringRef x = bemit [SStrRef64 x]
 
 emitString :: String -> ASM ()
-emitString s = emit (Prelude.map ascii s)
+emitString s = bemit (Prelude.map (SWord8 . ascii) s)
 
 emitProgSize64 :: ASM ()
-emitProgSize64 = emits [SProgSize64]
+emitProgSize64 = bemit [SProgSize64]
 
-emitWord64LE :: Word64 -> ASM ()
-emitWord64LE = emit . bytes putWord64le
+-- emitWord64LE :: Word64 -> ASM ()
+-- emitWord64LE = emit . bytes putWord64le
 
 -- Append label ref to buffer
 emitLabelRef64 :: String -> ASM ()
@@ -60,27 +63,51 @@ bytes putFun x = Prelude.map BS.c2w bs
 
 -- Buffered emit which doesn't emit an immediate command, 
 -- but places it in a buffer. bflush does a regular emit.
+-- The offset is updated for each of the ASMEmits.
 bemit :: [ASMEmit String] -> ASM ()
-bemit emits = modify (new emits)
+bemit xs = do
+    mapM bemit1 xs
+    return ()
+{-
   where 
     new :: [ASMEmit String] -> ASMState -> ASMState
     new appendEmits state = 
         state { 
-            asm_ebuf = asm_ebuf state >< S.fromList appendEmits
+            asm_ebuf   = asm_ebuf state >< S.fromList appendEmits
+        ,   asm_offset = asm_offset 
         }
+-}
+
+bemit1 :: ASMEmit String -> ASM () 
+bemit1 emit = modify (new emit)
+  where
+    new :: ASMEmit String -> ASMState -> ASMState
+    new appendEmit state = 
+        state {
+            asm_ebuf   = asm_ebuf   state |> appendEmit
+        ,   asm_offset = asm_offset state + fromIntegral (lenBytes appendEmit)
+        }
+
 
 -- Flush the buffer and empty it.
 bflush :: ASM ()
 bflush = do
-    s <- get
-    emits $ F.toList $ asm_ebuf s
-    modify (\s -> s { asm_ebuf = S.empty })
+    s   <- get
+    let buf  = asm_ebuf s 
+    let boff = asm_ebuf_off s -- the offset BEFORE the emits in the buffer
+    let off  = asm_offset s -- the offset just AFTER the emits in the buff
+    let pre  = asm_instr s
+    modify (\s -> s { asm_instr    = pre |> ASMEmit boff (F.toList buf) })
+    modify (\s -> s { asm_ebuf     = S.empty 
+                    , asm_ebuf_off = off
+                    })
 
 append :: ASMCode -> ASMState -> ASMState
+append (ASMEmit _ _) _ = error "Please don't append ASMEmit"
 append word state = state { asm_instr  = asm_instr  state |> word
-                          , asm_offset = asm_offset state + lbw
+                          -- , asm_offset = asm_offset state + lbw
                           }
-    where lbw = fromIntegral $ lenBytesCode word
+    -- where lbw = fromIntegral $ lenBytesCode word
 
 documentation :: String -> ASM ()
 documentation txt = do
@@ -123,8 +150,13 @@ assertOffsetIs offset msg = do
 assemble :: ASM b -> Either String ASMState
 assemble = runExcept . flip execStateT (istate 0x00)
 
+-- Display an address, used in an error message
+showWord64 :: Word64 -> String
+showWord64 w = intercalate " " $ Prelude.map showWord8 bs
+    where bs = bytes putWord64be w
+
 -- TODO: Where does this belong? Not here I think, as it's about
--- showing data on screen by the compiler
+-- showing data on screen by the compiler such as in hex binary output
 showWord8 :: Word8 -> String
 showWord8 w = hex h:hex l:[]
   where
@@ -192,6 +224,7 @@ getLabeledAddresses = do
 
 -- Produce a 64 bit absolute address in virtual memory from an absolute
 -- address in the program data
+-- This is x86 and byte-order dependent! Maybe it belongs to the X86 module.
 replaceWithAbsVMemAddr64 :: String -> Word64 -> Word64 -> ASM [Word8]
 replaceWithAbsVMemAddr64 label vmemOffset64 labelAddr64
     | vmemOffset64 + labelAddr64 <= max64BitUnsigned = 
@@ -219,35 +252,44 @@ replaceWithRelOffsetToLabel8 _ labelAddr64 refAddr64
     where 
         delta :: Integer
         delta = fromIntegral $ labelAddr64 - refAddr64
-replaceWithRelOffsetToLabel8 label _ _ = 
-    error $ "An 8-bit offset to label is out of bounds: " ++ label
+replaceWithRelOffsetToLabel8 label labelAddr64 refAddr64 = 
+    error $
+        "An 8-bit offset to label is out of bounds: " ++ label ++ "\n" 
+     ++ "The label points to address " ++ 
+            showWord64 labelAddr64 ++ "\n"
+     ++ "The source address is       " ++ 
+            showWord64 refAddr64 ++ "\n"
         
 -- Replace Labels with Bytes 
 -- resolves label references with bound checks.
 -- Folds down ASMEmit structures (in the ASM monad because it may fail)
-replaceLabelEmits :: Word64
-                  -> Word64
-                  -> M.Map String Word64
-                  -> ASMEmit String
-                  -> [ASMEmit String] -> ASM [ASMEmit String]
-replaceLabelEmits vmemOffset64 currentOffset64 addrs emit rest =
+replaceLabelEmits
+  :: Word64
+  -> M.Map String Word64
+  -> ASMEmit String
+  -> [ASMEmit String] 
+  -> ASM [ASMEmit String]
+replaceLabelEmits vmemOff64 addrs emit rest =
     case emitHasLabel emit of 
       Nothing -> return $ emit:rest
       Just la ->
         case M.lookup la addrs of
-          Nothing          -> error $ "Label reference not found: " ++ la
-          Just labelAddr64 -> do
-            replacementEmits <- repl labelAddr64 emit
+          Nothing    -> error $ "Label reference not found: " ++ la
+          Just lbl64 -> do
+            replacementEmits <- repl lbl64 emit
             return $ emit:Prelude.map SWord8 replacementEmits ++ rest
     where 
-        repl labelAddr64 (SProgLabel64 l) =
-            replaceWithAbsVMemAddr64 l vmemOffset64 labelAddr64
-        repl labelAddr64 (SProgLabel32 l) =
-            replaceWithAbsVMemAddr32 l vmemOffset64 labelAddr64
-        repl labelAddr64 (SRelOffsetToLabel32 refAddr64 l) =
-            replaceWithRelOffsetToLabel32 l labelAddr64 refAddr64
-        repl labelAddr64 (SRelOffsetToLabel8 refAddr64 l) =
-            replaceWithRelOffsetToLabel8 l labelAddr64 refAddr64
+        repl lbl64 (SProgLabel64 l) =
+            replaceWithAbsVMemAddr64 l vmemOff64 lbl64
+        repl lbl64 (SProgLabel32 l) =
+            replaceWithAbsVMemAddr32 l vmemOff64 lbl64
+        repl lbl64 (SRelOffsetToLabel32 currOff64 l) =
+            -- The offset is calculated from just AFTER the label,
+            -- i.e. from currOff64 plus the label reference length,
+            -- which for 32 bits is 4.
+            replaceWithRelOffsetToLabel32 l lbl64 (currOff64 + 4)
+        repl lbl64 (SRelOffsetToLabel8 currOff64 l) =
+            replaceWithRelOffsetToLabel8 l lbl64 (currOff64 + 1)
 
 -- Replace label references.
 replaceLabelsCode :: Word64              -- Virtual memory offset
@@ -255,10 +297,10 @@ replaceLabelsCode :: Word64              -- Virtual memory offset
                   -> ASMCode
                   -> S.Seq ASMCode 
                   -> ASM (S.Seq ASMCode)
-replaceLabelsCode vmemOffset addrs (ASMEmit currentOffset es) rest = do
+replaceLabelsCode vmemOffset addrs (ASMEmit o es) rest = do
     k <- foldrM f [] es
-    return $ ASMEmit currentOffset k <| rest
-    where f = replaceLabelEmits vmemOffset currentOffset addrs
+    return $ ASMEmit o k <| rest
+    where f = replaceLabelEmits vmemOffset addrs
 replaceLabelsCode _ _ any rest = return $ any <| rest
 
 replaceLabelsWithBytes :: Word64 -> ASM ()
@@ -287,9 +329,9 @@ replaceProgSizeWithBytes = do
     modify (\s -> s { asm_instr = new_asm_instr })
 
 replaceProgSizeCode :: Word64 -> ASMCode -> S.Seq ASMCode -> ASM (S.Seq ASMCode)
-replaceProgSizeCode progSize (ASMEmit currentOffset es) rest = do
+replaceProgSizeCode progSize (ASMEmit o es) rest = do
     k <- foldrM f [] es
-    return $ ASMEmit currentOffset k <| rest
+    return $ ASMEmit o k <| rest
   where 
     f = replaceProgSizeEmit progSize
 replaceProgSizeCode _ any rest = return $ any <| rest

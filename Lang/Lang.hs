@@ -83,12 +83,14 @@ appendDefinition prevLabel bodyLabel = do
     setLabel x
     case prevLabel of
         Just l  -> emitLabelRef64 l
-        Nothing -> emitWord64LE 0
-    emit [0] -- 0 means it's an ASM-based definition
-             -- 1 means it's an interpreter-based definition.
-    emit [fromIntegral $ length bodyLabel]
+        Nothing -> bemit $ take 8 $ repeat (SWord8 0)
+    bemit [SWord8 0] -- 0 means it's an ASM-based definition
+                     -- 1 means it's an interpreter-based definition.
+    -- TODO: throw error if bodyLabel exceeds 255 chars!
+    bemit [SWord8 $ fromIntegral $ length bodyLabel]
     emitString bodyLabel
     emitLabelRef64 bodyLabel
+    bflush
     return x
 
 -- Takes 1 parameter and adds input from stdin
@@ -224,7 +226,9 @@ defineEval = do
     -- RAX is a pointer to the sequence to be evaluated.
     -- The first entry in the sequence is a dictionary entry.
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
-    docLang "The entry type is at offset 8"
+    docLang "RAX holds the sequence of word definition locations to evaluate."
+    docLang "Move the entry type (at offset rax + 8) to rbx"
+    x86 $ mov rax (derefOffset rax 0)
     x86 $ mov rbx (derefOffset rax 8)
     docLang "If the entry type equals 0 then evaluate a base function..."
     x86 $ cmp rbx (I32 0x00)

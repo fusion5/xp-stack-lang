@@ -80,30 +80,36 @@ opcodeExt :: Integer -> Word8
 opcodeExt x | 0 <= x && x <= 7 = 
     fromIntegral x `shiftL` 3
 
--- Intel manual P.1207/5038
+
 mov :: Val -> Val -> X86_64 ()
+mov to from = do
+    docX86 $ "mov " ++ show to ++ " <- " ++ show from
+    mov_ to from
+
+-- Intel manual P.1207/5038
+mov_ :: Val -> Val -> X86_64 ()
 -- Emit immediate data to register
-mov (R64 dst) (I64 src) = do       -- REX.W + B8 +rd io | MOV r64, imm64
+mov_ (R64 dst) (I64 src) = do       -- REX.W + B8 +rd io | MOV r64, imm64
     rex_w                      
     emit1 $ 0xB8 .|. index dst     -- Which register in the last 3 bits of 0xB8
     imm64 src
     asm bflush
-mov (R64 dst) (L64 label) = do
+mov_ (R64 dst) (L64 label) = do
     rex_w
     emit1 $ 0xB8 .|. index dst
     asm $ emitLabelRef64 label
     asm bflush
-mov (R64 dst) (S64 str) = do
+mov_ (R64 dst) (S64 str) = do
     rex_w
     emit1 $ 0xB8 .|. index dst
     asm $ emitStringRef str
     asm bflush
-mov o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
+mov_ o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
     rex_w
     emit1 $ 0x89
     emit1 $ mrmByte o2 o1
     asm bflush
-mov o1@(R64 dst) o2@(RR64 src offset)
+mov_ o1@(R64 dst) o2@(RR64 src offset)
     -- | offset == 0 = do -- Offset = 0 could be done with a diff command
     --                                  but we do what nasm does here.
     | offset < min8BitValI || max8BitValI < offset = do 
@@ -128,7 +134,7 @@ mov o1@(R64 dst) o2@(RR64 src offset)
         imm8 $ fromIntegral offset
         asm bflush
 -- Dereference (dst plus offset): refactor with the other mov?
-mov o1@(RR64 dst offset) o2@(R64 src)
+mov_ o1@(RR64 dst offset) o2@(R64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         rex_w
         emit1 $ 0x89
@@ -143,7 +149,7 @@ mov o1@(RR64 dst offset) o2@(R64 src)
         weirdRSPHack dst
         imm8  $ fromIntegral offset
         asm bflush
-mov o1@(RR64 dst offset) o2@(I64 src)
+mov_ o1@(RR64 dst offset) o2@(I64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         rex_w
         emit1 $ 0xC7
@@ -160,7 +166,7 @@ mov o1@(RR64 dst offset) o2@(I64 src)
         imm8  $ fromIntegral offset
         imm32 $ fromIntegral src
         asm bflush
-mov o1@(RR64 dst offset) o2@(I8 src)
+mov_ o1@(RR64 dst offset) o2@(I8 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         -- write single byte at address
         emit1 $ 0xC6
@@ -177,7 +183,7 @@ mov o1@(RR64 dst offset) o2@(I8 src)
         imm8  $ fromIntegral offset
         imm8  $ fromIntegral src
         asm bflush
-mov o1@(RR64 dst offset) o2@(R8 src)
+mov_ o1@(RR64 dst offset) o2@(R8 src)
     | min8BitValI <= offset && offset <= max8BitValI = do
         emit1 $ 0x88
         emit1 $ modRegRef8bitOffset  .|.
@@ -186,7 +192,7 @@ mov o1@(RR64 dst offset) o2@(R8 src)
         imm8 $ fromIntegral offset
         asm bflush
         -- undefined
-mov o1@(R8 dst) (RR64 src offset) 
+mov_ o1@(R8 dst) (RR64 src offset) 
     | offset == 0 = do
         emit1 $ 0x8A
         emit1 $ (index8 dst `shiftL` 3) .|. index src
@@ -198,7 +204,7 @@ mov o1@(R8 dst) (RR64 src offset)
         imm8  $ fromIntegral offset
         weirdRSPHack src
         asm bflush
-mov o1 o2 = error $ "Unsupported mov operators: " ++ show o1 ++ " " ++ show o2
+mov_ o1 o2 = error $ "Unsupported mov operators: " ++ show o1 ++ " " ++ show o2
 
 weirdRSPHack reg =
     if reg == RSP then 
@@ -209,33 +215,42 @@ weirdRSPHack reg =
 -- Interrupt execution (perform a system call)
 int :: X86_64 ()
 int = do
+    docX86 "int"
     emit1 0xCD
     emit1 0x80
     asm bflush
 
 add :: Val -> Val -> X86_64 ()
-add = binop baseByte 0 -- 0 means the "/0" in the table at p.623
+add a b = do
+    docX86 $ "add " ++ show a ++ " " ++ show b
+    binop baseByte 0 a b -- 0 means the "/0" in the table at p.623
     where baseByte (R64 RAX) (I32 _)    = 0x05
           baseByte (R64 _)   (I32 _)    = 0x81
           baseByte (R64 _)   (R64 _)    = 0x01
           baseByte (R64 _)   (RR64 _ _) = 0x03
 
 sub :: Val -> Val -> X86_64 ()
-sub = binop baseByte 5 -- Means the "/5" in the table at p.1836
+sub a b = do
+    docX86 $ "add " ++ show a ++ " " ++ show b
+    binop baseByte 5 a b -- Means the "/5" in the table at p.1836
     where baseByte (R64 RAX) (I32 _)    = 0x2D
           baseByte (R64 _)   (I32 _)    = 0x81
           baseByte (R64 _)   (R64 _)    = 0x29
           baseByte (R64 _)   (RR64 _ _) = 0x2B
 
 and_ :: Val -> Val -> X86_64 ()
-and_ = binop baseByte 4
+and_ a b = do
+    docX86 $ "and " ++ show a ++ " " ++ show b
+    binop baseByte 4 a b
     where baseByte (R64 RAX) (I32 _)    = 0x25
           baseByte (R64 _)   (I32 _)    = 0x81
           baseByte (R64 _)   (R64 _)    = 0x21
           baseByte (R64 _)   (RR64 _ _) = 0x23
 
 cmp :: Val -> Val -> X86_64()
-cmp a b = binop baseByte 7 a b
+cmp a b = do
+    docX86 $ "cmp " ++ show a ++ " " ++ show b
+    binop baseByte 7 a b
     where baseByte (R64 RAX) (I32 _)    = 0x3D
           baseByte (R64 _)   (I32 _)    = 0x81
           baseByte (R64 _)   (R64 _)    = 0x39
@@ -271,20 +286,21 @@ binop _ _ o1 o2 = error $ "Unknown binops: " ++ show o1 ++ " " ++ show o2
 -- that follows the CALL instruction (Intel manual P.1725)
 ret :: X86_64() 
 ret = do
-    docX86 "return"
+    docX86 "ret"
     emit1 0xc3
     asm $ bflush
 
 -- Call the absolute address present in the given register.
 call :: Val -> X86_64 ()
 call r@(R64 _) = do
+    docX86 $ "call " ++ show r
     emit1 0xFF
     emit1 $ mrmByte rdx r -- rdx is ignored but it's here for NASM compat.
     asm $ bflush
 
 callLabel :: String -> X86_64 ()
 callLabel label = do
-    docX86 $ "Calling label " ++ label
+    docX86 $ "call " ++ label
     emit1 0xE8
     asm $ emitLabelOff32 label
     asm $ bflush
@@ -293,6 +309,7 @@ je :: String -> X86_64()
 -- Jump short if ZF=1. (i.e. If equal) 
 -- Offset is a signed offset relative to the current program position.
 je label = do
+    docX86 $ "je " ++ label
     emit1 0x74
     asm $ emitLabelOff8 label
     asm $ bflush

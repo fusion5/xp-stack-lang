@@ -13,3 +13,5 @@ main: asmgen assemble
 gdb_runtrace_main: main
 	gdb -command=gdbTraceRunParams.gdb $<
 	
+main.doc: asmgen
+	./asmgen doc > $@
