@@ -39,6 +39,7 @@ defineBaseFuns = do
     defineRdChrLinux
     defineWrChrLinux
     defineLit 
+    definePush1 -- Dummy test function that just pushes constant 1
 
     defineExit
 
@@ -58,7 +59,7 @@ data Dict =
 -- When interpreting an expression, we use the dictionary entries to find
 -- the definitions of terms in the expression.
 defineDictBase = do
-    x86 $ asm $ do
+    x86 $ do
         k <- appendDefinition Nothing  "PDROP"
         k <- appendDefinition (Just k) "EQ"
         k <- appendDefinition (Just k) "LT"
@@ -71,26 +72,31 @@ defineDictBase = do
         k <- appendDefinition (Just k) "AND"
         k <- appendDefinition (Just k) "LIT"
         k <- appendDefinition (Just k) "EXIT"
+        k <- appendDefinition (Just k) "PUSH1"
         return ()
         
 -- This is a sort of struct of C...
-appendDefinition :: Maybe String -> String -> ASM String
+appendDefinition :: Maybe String -> String -> X86_64 String
 appendDefinition prevLabel bodyLabel = do
-    documentation $ "Dictionary definition of " ++ bodyLabel
+    docX86 $ "Dictionary definition of " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
-    let x = "DICT_ENTRY_" ++ bodyLabel
+    let x = "DICT_" ++ bodyLabel
     -- Previous entry pointer
-    setLabel x
+    asm $ setLabel x
     case prevLabel of
-        Just l  -> emitLabelRef64 l
-        Nothing -> bemit $ take 8 $ repeat (SWord8 0)
-    bemit [SWord8 0] -- 0 means it's an ASM-based definition
-                     -- 1 means it's an interpreter-based definition.
+        Just l  -> asm $ emitLabelRef64 l
+        Nothing -> imm64 0
+    asm $ bflush
+    imm64 0 -- 0 means it's an ASM-based definition
+            -- 1 means it's an interpreter-based definition.
+    asm $ bflush
+    asm $ emitLabelRef64 bodyLabel
+    asm $ bflush
     -- TODO: throw error if bodyLabel exceeds 255 chars!
-    bemit [SWord8 $ fromIntegral $ length bodyLabel]
-    emitString bodyLabel
-    emitLabelRef64 bodyLabel
-    bflush
+    imm64 $ fromIntegral $ length bodyLabel
+    asm $ bflush
+    asm $ emitString bodyLabel
+    asm $ bflush
     return x
 
 -- Takes 1 parameter and adds input from stdin
@@ -187,6 +193,12 @@ defineShiftRight = defFunBasic fn ty body where
         x86 $ sar rax cl
         ppush rax
 
+definePush1 = defFunBasic fn ty body where
+    fn = "PUSH1"
+    ty = TyFunc fn TyEmpty baseWord
+    body = do
+        ppush (I64 1)
+
 -- Type:      : -> :w64
 -- Operation: : -> :literal
 defineLit = defFunBasic fn ty body where
@@ -209,14 +221,12 @@ defineLit = defFunBasic fn ty body where
 testDefinition :: Lang ()
 testDefinition = do
     x86 $ asm $ setLabel "TEST_SEQUENCE"
-    x86 $ asm $ emitLabelRef64 "DICT_ENTRY_LIT"
-    x86 $ imm64 $ 42
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
     x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_ENTRY_LIT"
-    x86 $ imm64 $ 42
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
     x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_ENTRY_PLUS"
-    x86 $ asm $ emitLabelRef64 "DICT_ENTRY_EXIT"
+    x86 $ asm $ emitLabelRef64 "DICT_PLUS"
+    x86 $ asm $ emitLabelRef64 "DICT_EXIT"
 
 defineEval :: Lang ()
 defineEval = do
@@ -226,19 +236,34 @@ defineEval = do
     -- RAX is a pointer to the sequence to be evaluated.
     -- The first entry in the sequence is a dictionary entry.
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
-    docLang "RAX holds the sequence of word definition locations to evaluate."
-    docLang "Move the entry type (at offset rax + 8) to rbx"
-    x86 $ mov rax (derefOffset rax 0)
-    x86 $ mov rbx (derefOffset rax 8)
+    docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
+    docLang "Load into r8 the first word in the sequence."
+    docLang "It's a pointer to a sort of 'struct' of method metadata."
+    x86 $ mov r9 (derefOffset r8 0)
+
+    docLang "r9 + 0:  Previous dictionary entry (if any)"
+    docLang "r9 + 8:  Type of dictionary entry (asm or compound)"
+    docLang "r9 + 16: Method body pointer"
+    docLang "r9 + 24: Length of dictionary name (l)"
+    docLang "r9 + 32: Entry name of length l" 
+
+    docLang "Move the entry type (located at offset r9 + 8) to r10"
+    x86 $ mov r10 (derefOffset r9 8)
+
     docLang "If the entry type equals 0 then evaluate a base function..."
-    x86 $ cmp rbx (I32 0x00)
+    x86 $ cmp r10 (I32 0x00)
     x86 $ jeNear "EVAL_BASE_FUNCTION"
+
     x86 $ asm $ setLabel "EVAL_BASE_FUNCTION"
-    docLang "The length of the dictionary entry name is at offset 16"
-    x86 $ mov rbx (derefOffset rax 16) 
-    x86 $ add rbx (I32 16)
-    docLang "Now rbx holds a reference to the address we need to call."
-    x86 $ call rbx
+    docLang "The method body pointer is at offset 16"
+    x86 $ mov r10 (derefOffset r9 16)
+    x86 $ call r10 
+
+    -- TODO: Move on to the next word in the sequence.
+    x86 $ add r8 (I32 8)
+
+    x86 $ jmpLabel "EVAL" -- Loop
+
     x86 $ ret 
 
 -- Type:      :w64:w64 -> w64
@@ -287,7 +312,7 @@ definePDrop = defFunBasic "PDROP" ty body
     where body = pdrop 1
           ty   = TyFunc "PDROP" baseWord TyEmpty
 
--- Parameter stack drop
+-- Parameter stack drop, alters the parameter stack register rsi
 pdrop :: Int32 -> Lang ()
 pdrop numW64s =
     x86 $ add rsi $ I32 $ fromIntegral $ numW64s * 8

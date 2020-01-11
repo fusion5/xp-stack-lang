@@ -231,7 +231,7 @@ add a b = do
 
 sub :: Val -> Val -> X86_64 ()
 sub a b = do
-    docX86 $ "add " ++ show a ++ " " ++ show b
+    docX86 $ "sub " ++ show a ++ " " ++ show b
     binop baseByte 5 a b -- Means the "/5" in the table at p.1836
     where baseByte (R64 RAX) (I32 _)    = 0x2D
           baseByte (R64 _)   (I32 _)    = 0x81
@@ -293,6 +293,7 @@ ret = do
 -- Call the absolute address present in the given register.
 call :: Val -> X86_64 ()
 call r@(R64 _) = do
+    -- Call operates on the call stack register rsp
     docX86 $ "call " ++ show r
     emit1 0xFF
     emit1 $ mrmByte rdx r -- rdx is ignored but it's here for NASM compat.
