@@ -10,6 +10,7 @@ import ELFHeader        -- ELF header
 -- import Linux         -- Linux constants
 import X86.Datatypes    -- X86-specific assembly datatypes
 import X86.X86          -- X86-specific assembly code
+import X86.Tests        -- X86-specific test suite (with NASM commands)
 -- import X86.Debug     -- X86-specific debug helper functions
 -- import X86.Functions -- Functions
 -- import X86.Types     -- Types for the functions
@@ -71,8 +72,8 @@ assembly = do
     emitStrings
         where vaddr_offset = 0xC0000000
 
-doAction f = 
-    case assemble assembly of 
+doAction f as = 
+    case assemble as of 
         Left err -> 
             putStrLn $ "Error: " ++ err
         Right s  -> 
@@ -82,9 +83,11 @@ main :: IO ()
 main = do
     args <- getArgs
     case listToMaybe args of
-        Nothing           -> doAction asmBytesOnly
-        Just "dump_bytes" -> doAction asmBytesOnly
-        Just "doc"        -> doAction asmPretty
+        Nothing           -> doAction ASM.Pretty.asmBytesOnly assembly
+        Just "dump_bytes" -> doAction ASM.Pretty.asmBytesOnly assembly
+        Just "doc"        -> doAction ASM.Pretty.asmPretty    assembly
+        Just "test_x86"   -> doAction ASM.Pretty.asmBytesOnly x86TestSuiteASM
+        Just "test_x86_n" -> putStr   $ x86TestSuiteNASM
         Just x            -> putStrLn $ "Unknown option \"" ++ x ++ "\""
 
 

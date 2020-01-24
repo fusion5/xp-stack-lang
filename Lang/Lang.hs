@@ -238,8 +238,8 @@ defineEval = do
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
     docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
     docLang "Load into r8 the first word in the sequence."
-    docLang "It's a pointer to a sort of 'struct' of method metadata."
-    x86 $ mov r9 (derefOffset r8 0)
+    docLang "It's a pointer to a 'struct' of definitions with metadata."
+    x86 $ mov rr9 (derefOffset rr8 0)
 
     docLang "r9 + 0:  Previous dictionary entry (if any)"
     docLang "r9 + 8:  Type of dictionary entry (asm or compound)"
@@ -248,19 +248,19 @@ defineEval = do
     docLang "r9 + 32: Entry name of length l" 
 
     docLang "Move the entry type (located at offset r9 + 8) to r10"
-    x86 $ mov r10 (derefOffset r9 8)
+    x86 $ mov rr10 (derefOffset rr9 8)
 
     docLang "If the entry type equals 0 then evaluate a base function..."
-    x86 $ cmp r10 (I32 0x00)
+    x86 $ cmp rr10 (I32 0x00)
     x86 $ jeNear "EVAL_BASE_FUNCTION"
 
     x86 $ asm $ setLabel "EVAL_BASE_FUNCTION"
     docLang "The method body pointer is at offset 16"
-    x86 $ mov r10 (derefOffset r9 16)
-    x86 $ call r10 
+    x86 $ mov rr10 (derefOffset rr9 16)
+    x86 $ call rr10 
 
     -- TODO: Move on to the next word in the sequence.
-    x86 $ add r8 (I32 8)
+    x86 $ add rr8 (I32 8)
 
     x86 $ jmpLabel "EVAL" -- Loop
 

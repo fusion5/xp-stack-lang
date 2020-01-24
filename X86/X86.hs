@@ -80,11 +80,20 @@ opcodeExt :: Integer -> Word8
 opcodeExt x | 0 <= x && x <= 7 = 
     fromIntegral x `shiftL` 3
 
+-- Loads the value from the top of the stack
+-- to the location specified with the destination operand and pops
+-- the stack.
+pop :: Val -> X86_64()
+pop (R64 to) = do
+    docX86 $ "pop " ++ show to
+    emit1 $ 0x58 .|. index to
+    asm $ bflush
 
 mov :: Val -> Val -> X86_64 ()
 mov to from = do
     docX86 $ "mov " ++ show to ++ " <- " ++ show from
     mov_ to from
+    asm $ bflush
 
 -- Intel manual P.1207/5038
 mov_ :: Val -> Val -> X86_64 ()
@@ -93,22 +102,18 @@ mov_ (R64 dst) (I64 src) = do       -- REX.W + B8 +rd io | MOV r64, imm64
     rex_w                      
     emit1 $ 0xB8 .|. index dst     -- Which register in the last 3 bits of 0xB8
     imm64 src
-    asm bflush
 mov_ (R64 dst) (L64 label) = do
     rex_w
     emit1 $ 0xB8 .|. index dst
     asm $ emitLabelRef64 label
-    asm bflush
 mov_ (R64 dst) (S64 str) = do
     rex_w
     emit1 $ 0xB8 .|. index dst
     asm $ emitStringRef str
-    asm bflush
 mov_ o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
     rex_w
     emit1 $ 0x89
     emit1 $ mrmByte o2 o1
-    asm bflush
 mov_ o1@(R64 dst) o2@(RR64 src offset)
     -- | offset == 0 = do -- Offset = 0 could be done with a diff command
     --                                  but we do what nasm does here.
@@ -120,7 +125,6 @@ mov_ o1@(R64 dst) o2@(RR64 src offset)
             index src
         weirdRSPHack src
         imm32 $ fromIntegral offset 
-        asm bflush
     | min8BitValI <= offset && offset <= max8BitValI = do
         rex_w
         emit1 $ 0x8B
@@ -132,7 +136,6 @@ mov_ o1@(R64 dst) o2@(RR64 src offset)
         -- operand 2 (src)
         -- emit1 $ modReg .|. index src
         imm8 $ fromIntegral offset
-        asm bflush
 -- Dereference (dst plus offset): refactor with the other mov?
 mov_ o1@(RR64 dst offset) o2@(R64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
@@ -141,14 +144,12 @@ mov_ o1@(RR64 dst offset) o2@(R64 src)
         emit1 $ modRegRef32bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm32 $ fromIntegral offset
-        asm bflush
     | min8BitValI <= offset && offset <= max8BitValI = do
         rex_w
         emit1 $ 0x89
         emit1 $ modRegRef8bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm8  $ fromIntegral offset
-        asm bflush
 mov_ o1@(RR64 dst offset) o2@(I64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         rex_w
@@ -157,7 +158,6 @@ mov_ o1@(RR64 dst offset) o2@(I64 src)
         weirdRSPHack dst
         imm32 $ fromIntegral offset
         imm32 $ fromIntegral src
-        asm bflush
     | min8BitValI <= offset && offset <= max8BitValI = do
         rex_w
         emit1 $ 0xC7
@@ -165,7 +165,6 @@ mov_ o1@(RR64 dst offset) o2@(I64 src)
         weirdRSPHack dst
         imm8  $ fromIntegral offset
         imm32 $ fromIntegral src
-        asm bflush
 mov_ o1@(RR64 dst offset) o2@(I8 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         -- write single byte at address
@@ -174,7 +173,6 @@ mov_ o1@(RR64 dst offset) o2@(I8 src)
         weirdRSPHack dst
         imm32 $ fromIntegral offset
         imm8  $ fromIntegral src
-        asm bflush
     | min8BitValI <= offset && offset <= max8BitValI = do
         -- write single byte at address
         emit1 $ 0xC6
@@ -182,7 +180,6 @@ mov_ o1@(RR64 dst offset) o2@(I8 src)
         weirdRSPHack dst
         imm8  $ fromIntegral offset
         imm8  $ fromIntegral src
-        asm bflush
 mov_ o1@(RR64 dst offset) o2@(R8 src)
     | min8BitValI <= offset && offset <= max8BitValI = do
         emit1 $ 0x88
@@ -190,20 +187,17 @@ mov_ o1@(RR64 dst offset) o2@(R8 src)
             (index8 src `shiftL` 3)  .|.
             index dst
         imm8 $ fromIntegral offset
-        asm bflush
         -- undefined
 mov_ o1@(R8 dst) (RR64 src offset) 
     | offset == 0 = do
         emit1 $ 0x8A
         emit1 $ (index8 dst `shiftL` 3) .|. index src
         weirdRSPHack src
-        asm bflush
     | min8BitValI <= offset && offset <= max8BitValI = do
         emit1 $ 0x8A
         emit1 $ modRegRef8bitOffset .|. (index8 dst `shiftL` 3) .|. index src
         imm8  $ fromIntegral offset
         weirdRSPHack src
-        asm bflush
 mov_ o1 o2 = error $ "Unsupported mov operators: " ++ show o1 ++ " " ++ show o2
 
 weirdRSPHack reg =
@@ -358,6 +352,46 @@ jmp (R64 reg) = do
     emit1 $ 0xC0 .|. bit 5 .|. index reg -- ModRM byte
     asm $ bflush
 
+jmpPtrOffset8 (R64 reg) offset = do
+    emit1 0xFF
+    emit1 $ 0x40 .|. bit 5 .|. index reg  -- ModRM byte
+    imm8 $ fromIntegral offset
+    asm $ bflush
+
+-- Logical compare, Intel manual P.1862
+-- Computes the bit-wise logical AND between operands,
+-- and sets the SF,ZF and PF status flags.
+-- REX.W + 85 /r | TEST r/m64, r64
+test :: Val -> Val -> X86_64()
+test o1@(R64 r1) o2@(R64 r2) = do
+    rex_w
+    emit1 0x85
+    emit1 $ mrmByte o2 o1
+    asm $ bflush
+
+inc :: Val -> X86_64 ()
+inc r@(R64 dst) = do
+    rex_w
+    emit1 0xFF
+    emit1 $ mrmByte rax r -- the 1nd operand is ignored
+    asm $ bflush
+
+-- Push word, doubleword or quadword onto the stack
+push :: Val -> X86_64 ()
+push (I64 val) = error $ "Unable to push a 64 bit literal! " ++
+    "A workaround is to load it in a register, then push that register."
+push (I32 val) = do
+    emit1 0x68
+    imm32 val -- Low-order byte first (checked)
+    asm bflush
+push (R64 src) = do
+    emit1 $ 0x50 .|. index src
+    asm bflush
+push (I8 val) = do 
+    emit1 0x6A -- Pushes an immediate 1 byte value and advances
+    imm8  val  -- stack by 8 bytes! (Suprisingly.)
+    asm bflush
+
 jmpLabel :: String -> X86_64()
 jmpLabel label = do
     docX86 $ "jmp"
@@ -418,4 +452,5 @@ xor o1@(R64 dst) o2@(R64 src) = do -- REX.W + 31 /r | XOR r/m64, r64
     rex_w
     emit1 0x31
     emit1 $ mrmByte o2 o1
+    asm bflush
 

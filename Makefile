@@ -2,9 +2,24 @@
 asmgen: ELFHeader.hs Main.hs \
  ASM/ASM.hs ASM/Datatypes.hs ASM/Pretty.hs \
  Lang/Datatypes.hs Lang/Lang.hs Lang/Linux.hs Lang/Types.hs \
- X86/Datatypes.hs X86/X86.hs
+ X86/Datatypes.hs X86/X86.hs X86/Tests.hs
 	ghc Main.hs -o $@
 
+x86_test_nasm.listing: asmgen Makefile
+	echo BITS 64 > tmp .nasm
+	./asmgen test_x86_n >> tmp.nasm
+	nasm -O0 -fbin tmp.nasm -o tmp.bin
+	ndisasm -b 64 tmp.bin > $@
+	rm -f tmp.nasm tmp.bin
+
+x86_test_hs.listing: asmgen Makefile
+	./asmgen test_x86 | ./assemble > tmp
+	ndisasm -b 64 tmp > $@
+	rm -f tmp
+
+x86_test: x86_test_nasm.listing x86_test_hs.listing
+	diff --left-column -y $^ && echo "PASS" || echo "FAIL"
+	
 
 main: asmgen assemble
 	./asmgen | ./assemble > $@
@@ -15,3 +30,4 @@ gdb_runtrace_main: main
 	
 main.doc: asmgen
 	./asmgen doc > $@
+

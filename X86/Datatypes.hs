@@ -65,12 +65,12 @@ data Reg64
   | RBP  -- Previous Stack Frame Link
   | RR8  -- R8
   | RR9  -- R9
-  | R10  -- R10
-  | R11  -- R11
-  | R12  -- R12
-  | R13  -- R13
-  | R14  -- R14
-  | R15  -- R15
+  | RR10 -- R10
+  | RR11 -- R11
+  | RR12 -- R12
+  | RR13 -- R13
+  | RR14 -- R14
+  | RR15 -- R15
   deriving (Eq, Show)
 
 data Reg8 
@@ -90,7 +90,6 @@ data Reg8
   | R13B
   | R14B
   | R15B
-  | R16B
   deriving (Eq, Show)
 
 rax = R64 RAX
@@ -101,6 +100,14 @@ rdx = R64 RDX
 rbp = R64 RBP
 rdi = R64 RDI
 rsi = R64 RSI
+rr8 = R64 RR8
+rr9 = R64 RR9
+rr10 = R64 RR10
+rr11 = R64 RR11
+rr12 = R64 RR12
+rr13 = R64 RR13
+rr14 = R64 RR14
+rr15 = R64 RR15
 
 al = R8 AL
 cl = R8 CL
