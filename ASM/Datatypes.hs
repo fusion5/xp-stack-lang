@@ -57,6 +57,9 @@ lenBytes (SStrRef64 _) = 8
 
 type ASM a = StateT ASMState (Except String) a
 
+class Documentation m where
+    doc :: String -> m
+
 data ASMState = ASMState
     { asm_instr    :: S.Seq ASMCode -- Sequence of opcodes, labels and docs
 --  , asm_bytes    :: S.Seq Word8   -- Resulting assembly code

@@ -1,3 +1,5 @@
+{-# Language TypeSynonymInstances #-}
+{-# Language FlexibleInstances #-}
 module ASM.ASM where
 
 import Control.Monad.Except
@@ -109,10 +111,15 @@ append word state = state { asm_instr  = asm_instr  state |> word
                           }
     -- where lbw = fromIntegral $ lenBytesCode word
 
+instance Documentation (ASM ()) where
+    doc str = do 
+        s <- get
+        modify $ append $ ASMDoc (asm_offset s) str
+
 documentation :: String -> ASM ()
-documentation txt = do
+documentation txt = doc txt {- do
     s <- get
-    modify $ append $ ASMDoc (asm_offset s) txt
+    modify $ append $ ASMDoc (asm_offset s) txt -}
 
 setLabel :: String -> ASM ()
 setLabel txt = do

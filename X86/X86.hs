@@ -1,3 +1,5 @@
+{-# Language TypeSynonymInstances #-}
+{-# Language FlexibleInstances #-}
 module X86.X86 where
 
 import ASM.ASM
@@ -14,7 +16,12 @@ derefOffset (R64 r) offset = RR64 r offset
 derefOffset _ _ = error "References with Offsets can only be applied to registers"
 
 -- Documentation at the X86 programming level (asm instructions)
-docX86 = asm . documentation . ("X86: " ++)
+
+instance Documentation (X86_64 ()) where
+    doc = asm . doc
+
+docX86 :: String -> X86_64 ()
+docX86 = doc . ("X86: " ++)
 
 imm64 :: Word64 -> X86_64 ()
 imm64 = asm . bemit . Prelude.map SWord8 . bytes putWord64le

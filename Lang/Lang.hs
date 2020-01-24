@@ -1,3 +1,5 @@
+{-# Language TypeSynonymInstances #-}
+{-# Language FlexibleInstances #-}
 module Lang.Lang where
 
 -- Language-specific functionality. This module sits on top of the
@@ -17,7 +19,11 @@ import Lang.Linux
 import Data.Int
 import Data.Word
 
-docLang = x86 . docX86 . ("Lang: " ++)
+instance Documentation (Lang ()) where
+    doc = x86 . doc
+
+docLang :: String -> Lang ()
+docLang = doc
 
 defineBaseFuns = do
     definePDrop
@@ -38,6 +44,9 @@ defineBaseFuns = do
 
     defineRdChrLinux
     defineWrChrLinux
+
+    defineRdLineLinux
+
     defineLit 
     definePush1 -- Dummy test function that just pushes constant 1
 
@@ -127,6 +136,59 @@ appendASMDefinition prevLabel bodyLabel = do
     asm $ bflush
     return x
 
+defineRdLineLinux :: Lang ()
+defineRdLineLinux = defFunBasic funName ty body
+  where
+    funName = "READ_LINE"
+    ty      = undefined
+    body    = do
+        docLang "Reads characters until a new line char is read."
+        docLang "It leaves on the stack an array of w8 followed by a"
+        docLang "w64 indicating how many chars have been read,"
+        docLang "followed by a w64 indicating success or failure."
+
+        docLang "r15 counts the chars that are successfully read."
+        x86 $ xor r15 r15
+
+        x86 $ asm $ setLabel "READ_LINE_WHILE"
+
+        docLang "Allocate 8 bytes on the param stack:"
+        ppush $ I8 0x00
+
+        docLang "Read 1 char:"
+        x86 $ mov  rdx $ I64 0x01 
+        docLang "File descriptor 0 <-> read from stdin:"
+        x86 $ xor  rbx rbx
+        docLang "Use the linux_sys_read system call:"
+        x86 $ mov  rax $ I64 $ fromIntegral linux_sys_read
+        docLang "Where to write? To the top of the param stack:"
+        x86 $ mov  rcx rsi
+        x86 $ int
+
+        x86 $ cmp rax $ I32 0x00
+        x86 $ je "READ_LINE_ERROR"
+
+        docLang "If the char we just read is a newline, break the loop:"
+        ptopW8 rax
+        x86 $ cmp rax $ I32 0x0A
+        x86 $ je "READ_LINE_BREAK"
+        
+        x86 $ inc r15
+
+        docLang  "Repeat the operation"
+        x86 $ jmpLabel "READ_LINE_WHILE"
+
+        x86 $ asm $ setLabel "READ_LINE_BREAK"
+        ppopW8 al
+        ppush $ r15   -- Num of chars read
+        ppush $ I64 1 -- Success
+        x86 $ ret
+
+        x86 $ asm $ setLabel "READ_LINE_ERROR"
+        ppush $ r15   -- Num of chars read
+        ppush $ I64 0 -- Error
+        x86 $ ret
+
 -- Takes 1 parameter and adds input from stdin
 -- on the parameters stack as well as the result.
 -- http://man7.org/linux/man-pages/man2/read.2.html
@@ -138,14 +200,19 @@ defineRdChrLinux = defFunBasic funName ty body
     funName = "READ_CHAR"
     ty      = TyFunc "READ_CHAR" TyEmpty (TyProd baseWord TyWord)
     body = do
-        -- push $ I32 0x00 -- Allocate 8 bytes on the call stack to read on
-        ppush $ I8 0x00 -- Allocate 8bytes on the param stack
+        docLang "Allocate 8 bytes on the param stack:"
+        ppush $ I8 0x00
 
-        x86 $ mov  rdx $ I64 0x01 -- Read 1 char
-        x86 $ xor  rbx rbx        -- file descriptor: 0 <-> Read from stdin
-        x86 $ mov  rax $ I64 $ fromIntegral linux_sys_read
-        x86 $ mov  rcx rsi        -- Write to the top of the param stack, 1 byte...
-        x86 $ int
+        x86 $ do 
+            docX86 "Read 1 char:"
+            mov  rdx $ I64 0x01 
+            docX86 "File descriptor 0 <-> read from stdin:"
+            xor  rbx rbx
+            docX86 "Use the linux_sys_read system call:"
+            mov  rax $ I64 $ fromIntegral linux_sys_read
+            docX86 "Where to write? To the top of the param stack:"
+            mov  rcx rsi
+            int
 
         -- After the call, rax has the number of bytes that were read.
         -- Convert those bytes from the call stack buffer to the parameter
@@ -247,28 +314,28 @@ defineLit = defFunBasic fn ty body where
 
 -- A sequence definition attempt which we want to evaluate.
 testDefinition :: Lang ()
-testDefinition = do
-    x86 $ asm $ setLabel "TEST"
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH3"
-    x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_PLUS"
-    x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_PLUS"
-    x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_EXIT"
-    x86 $ asm $ bflush
-    x86 $ imm64 0 -- Marks the sequence end
-    x86 $ asm $ bflush
+testDefinition = x86 $ do
+    asm $ setLabel "TEST"
+    asm $ emitLabelRef64 "DICT_PUSH3"
+    asm $ bflush
+    asm $ emitLabelRef64 "DICT_PLUS"
+    asm $ bflush
+    asm $ emitLabelRef64 "DICT_PLUS"
+    asm $ bflush
+    asm $ emitLabelRef64 "DICT_EXIT"
+    asm $ bflush
+    imm64 0 -- Marks the sequence end
+    asm $ bflush
 
-    x86 $ asm $ setLabel "PUSH3"
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
-    x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
-    x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
-    x86 $ asm $ bflush
-    x86 $ imm64 0 -- Marks the sequence end
-    x86 $ asm $ bflush
+    asm $ setLabel "PUSH3"
+    asm $ emitLabelRef64 "DICT_PUSH1"
+    asm $ bflush
+    asm $ emitLabelRef64 "DICT_PUSH1"
+    asm $ bflush
+    asm $ emitLabelRef64 "DICT_PUSH1"
+    asm $ bflush
+    imm64 0 -- Marks the sequence end
+    asm $ bflush
 
 defineEval :: Lang ()
 defineEval = do
@@ -301,28 +368,30 @@ defineEval = do
     x86 $ cmp r10 (I32 0x01)
     x86 $ jeNear "EVAL_WORDS"
 
-    x86 $ asm $ setLabel "EVAL_ASM"
-    docLang "Evaluating assembly"
+    docLang "Type = 0: Evaluating assembly"
     docLang "Move the method body pointer to r10"
     docLang "The method body pointer is at r9+16"
-    x86 $ mov r10 (derefOffset r9 16)
-    docLang "Call the method using 'call'."
-    x86 $ call r10 
-    x86 $ jmpLabel "EVAL_STEP_DONE"
+    x86 $ do
+        asm $ setLabel "EVAL_ASM"
+        mov r10 (derefOffset r9 16)
+        call r10 
+        jmpLabel "EVAL_STEP_DONE"
 
-    x86 $ asm $ setLabel "EVAL_WORDS"
-    docLang "Evaluating a sequence of words"
+    docLang "Type = 1: Evaluating a sequence of words"
     docLang "Recursively call EVAL on a sequence."
     docLang "The sequence to be called is at r9 + 16."
     docLang "Prepare for eval recursion: save the current r8 on the "
     docLang "call stack."
-    x86 $ push r8
-    x86 $ mov r8 (derefOffset r9 16)
-    x86 $ callLabel "EVAL" -- Recursion
-    x86 $ pop r8
-    x86 $ jmpLabel "EVAL_STEP_DONE"
+    x86 $ do 
+        asm $ setLabel "EVAL_WORDS"
+        push r8
+        mov r8 (derefOffset r9 16)
+        callLabel "EVAL" -- Recursion
+        pop r8
+        jmpLabel "EVAL_STEP_DONE"
 
     x86 $ asm $ setLabel "EVAL_STEP_DONE"
+
     -- TODO: Move on to the next word in the sequence we're evaluating.
     x86 $ add r8 (I32 8)
 
@@ -389,10 +458,21 @@ ppop dst64@(R64 _) = do
     x86 $ mov dst64 $ derefOffset rsi 0
     x86 $ add rsi $ I32 8
 
+ppeer :: Int32 -> Val -> Lang ()
+ppeer numW64s dst =
+    x86 $ mov dst $ derefOffset rsi (fromIntegral $ numW64s * 8)
+
+ppeerW8 :: Int32 -> Val -> Lang ()
+ppeerW8 numW8s dst =
+    x86 $ mov dst $ derefOffset rsi (fromIntegral numW8s)
+
+ptopW8 :: Val -> Lang ()
+ptopW8 = ppeerW8 0
+
 ppopW8 :: Val -> Lang ()
-ppopW8 dst@(R8 reg) = do
-    x86 $ mov dst $ derefOffset rsi 0
-    x86 $ add rsi $ I32 1
+ppopW8 dst@(R8 reg) = x86 $ do
+    mov dst $ derefOffset rsi 0
+    add rsi $ I32 1
 
 cpeerW8 :: Int32 -> Val -> X86_64 ()
 cpeerW8 numW8s dst =
@@ -415,7 +495,7 @@ ctop = cpeer 0
 -- FIXME: Rather than RSI use RBP which isn't used anyway.
 ppush :: Val -> Lang ()
 ppush v | supported v = do
-    docLang $ "Parameter stack push from register " ++ show v
+    docLang $ "ppush from register " ++ show v
     x86 $ sub rsi $ I32 $ sz v
     x86 $ mov (derefOffset rsi 0) v
     where sz (I64 _)    = 8
@@ -428,7 +508,7 @@ ppush v | supported v = do
           supported (I64 _) = True
           supported (R64 _) = True
           supported _ = False
-ppush v = error $ "Don't know how to ppush " ++ show v
+ppush v = error $ "ppush doesn't support " ++ show v
 
 -- A function made up of assembly which has a type.
 -- This is used to define the built-in (basic) functions

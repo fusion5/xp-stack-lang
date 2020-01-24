@@ -40,7 +40,7 @@ asmCodePretty (ASMEmit offset instrs) =
 asmCodePretty (ASMLabel offset label) = 
     ". " ++ label
 asmCodePretty (ASMDoc offset doc) = 
-    "# " ++ doc
+    "         # " ++ doc
 
 asmEmitPretty (SWord8 w8) = showWord8 w8 ++ " "-- (showHex w8 " ")
 asmEmitPretty (SProgLabel64 lt) = "{" ++ lt ++ "} " 

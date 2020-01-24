@@ -49,6 +49,9 @@ initParamStack = do
     add rsi (I32 10000) 
 
 mainLang = do
+    docLang "Read from stdin the dict. entry that we should interpret."
+    x86 $ callLabel "READ_LINE"
+
     docLang "TESTS:"
     x86 $ mov r8 (L64 "TEST") -- What to interpret
     x86 $ callLabel "EVAL" -- Eval function
