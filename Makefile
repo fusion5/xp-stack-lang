@@ -9,12 +9,13 @@ x86_test_nasm.listing: asmgen Makefile
 	echo BITS 64 > tmp.nasm
 	./asmgen test_x86_n >> tmp.nasm
 	nasm -O0 -fbin tmp.nasm -o tmp.bin
-	ndisasm -b 64 tmp.bin > $@
+	# Remove first 10 chars to remove useless info
+	ndisasm -b 64 tmp.bin | cut -c 11- > $@
 	rm -f tmp.nasm tmp.bin
 
 x86_test_hs.listing: asmgen Makefile
 	./asmgen test_x86 | ./assemble > tmp
-	ndisasm -b 64 tmp > $@
+	ndisasm -b 64 tmp | cut -c 11- > $@
 	rm -f tmp
 
 x86_test: x86_test_nasm.listing x86_test_hs.listing

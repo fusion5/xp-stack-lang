@@ -135,20 +135,32 @@ index8 x = case x of
 
 index :: Reg64 -> Word8
 index x = case x of
-  RAX -> 0 -- 000
-  RCX -> 1 -- 001
-  RDX -> 2 -- 010
-  RBX -> 3 -- 011
-  RSP -> 4 -- 100
-  RBP -> 5 -- 101
-  RSI -> 6 -- 110
-  RDI -> 7 -- 111
-{-  R8  -> 8 Not quite right... superior register access is done using
-  R9  -> 9   a REX bit...
-  R10 -> 10
-  R11 -> 11
-  R12 -> 12
-  R13 -> 13
-  R14 -> 14
-  R15 -> 15 -}
+  RAX  -> 0 -- 000
+  RCX  -> 1 -- 001
+  RDX  -> 2 -- 010
+  RBX  -> 3 -- 011
+  RSP  -> 4 -- 100
+  RBP  -> 5 -- 101
+  RSI  -> 6 -- 110
+  RDI  -> 7 -- 111
+  RR8  -> 0 -- Probably Not quite right... superior register access is done using
+  RR9  -> 1 -- a REX bit...
+  RR10 -> 2
+  RR11 -> 3
+  RR12 -> 4
+  RR13 -> 5
+  RR14 -> 6
+  RR15 -> 7
 
+-- Indicate whether it's one of the scratch registers that are added to 
+-- the 64 bit architecture
+isSupReg :: Reg64 -> Bool
+isSupReg RR8  = True
+isSupReg RR9  = True
+isSupReg RR10 = True
+isSupReg RR11 = True
+isSupReg RR12 = True
+isSupReg RR13 = True
+isSupReg RR14 = True
+isSupReg RR15 = True
+isSupReg _    = False

@@ -30,12 +30,23 @@ emit1 = asm . bemit . (:[]) . SWord8
 
 -- The REX value is in binary "0100WRXB" where W,R,X and B are bits.
 -- Detailed here: https://wiki.osdev.org/index.php?title=X86-64_Instruction_Encoding
-word_rex, word_rex_w :: Word8
+word_rex, word_rex_w, word_rex_b, word_rex_r, word_rex_x :: Word8
 word_rex   = bit 6
-word_rex_w = bit 3
+word_rex_w = bit 3 -- Indicates that the instruction is promoted to 64 bits
+word_rex_r = bit 2 -- Permits access to registers R8-R15 of an operand
+word_rex_b = bit 0 -- Permits access to registers R8-R15 of an operand
+word_rex_x = bit 1 -- ?? Not yet sure what this does.
 
--- REX.W is a prefix used many times for 64 bit mode instructions
-rex_w = emit1 $ word_rex .|. word_rex_w
+-- REX is a prefix often used in 64 bit mode instructions.
+rex   a b = emit1 $ rex_   a b
+rex_w a b = emit1 $ rex_w_ a b
+
+rex_w_ a b = word_rex_w .|. rex_ a b
+rex_ mayOper1 mayOper2 = word_rex 
+    .|. b mayOper1 word_rex_r
+    .|. b mayOper2 word_rex_b
+    where b Nothing      _ = 0
+          b (Just reg) w = if isSupReg reg then w else 0
 
 {- These modes are the first 2 bits of the ModRM Byte
  - See Intel Manual P.528, ModR/M byte definition
@@ -86,6 +97,7 @@ opcodeExt x | 0 <= x && x <= 7 =
 pop :: Val -> X86_64()
 pop (R64 to) = do
     docX86 $ "pop " ++ show to
+    if isSupReg to then rex Nothing (Just to) else return ()
     emit1 $ 0x58 .|. index to
     asm $ bflush
 
@@ -99,26 +111,26 @@ mov to from = do
 mov_ :: Val -> Val -> X86_64 ()
 -- Emit immediate data to register
 mov_ (R64 dst) (I64 src) = do       -- REX.W + B8 +rd io | MOV r64, imm64
-    rex_w                      
+    rex_w Nothing (Just dst) 
     emit1 $ 0xB8 .|. index dst     -- Which register in the last 3 bits of 0xB8
     imm64 src
 mov_ (R64 dst) (L64 label) = do
-    rex_w
+    rex_w Nothing (Just dst) 
     emit1 $ 0xB8 .|. index dst
     asm $ emitLabelRef64 label
 mov_ (R64 dst) (S64 str) = do
-    rex_w
+    rex_w Nothing (Just dst) 
     emit1 $ 0xB8 .|. index dst
     asm $ emitStringRef str
 mov_ o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
-    rex_w
+    rex_w (Just dst) (Just src)
     emit1 $ 0x89
     emit1 $ mrmByte o2 o1
 mov_ o1@(R64 dst) o2@(RR64 src offset)
     -- | offset == 0 = do -- Offset = 0 could be done with a diff command
     --                                  but we do what nasm does here.
     | offset < min8BitValI || max8BitValI < offset = do 
-        rex_w
+        rex_w (Just dst) (Just src)
         emit1 $ 0x8B
         emit1 $ modRegRef32bitOffset .|. 
             (index dst `shiftL` 3)   .|. 
@@ -126,7 +138,7 @@ mov_ o1@(R64 dst) o2@(RR64 src offset)
         weirdRSPHack src
         imm32 $ fromIntegral offset 
     | min8BitValI <= offset && offset <= max8BitValI = do
-        rex_w
+        rex_w (Just dst) (Just src)
         emit1 $ 0x8B
         -- operand 1 (dest)
         emit1 $ modRegRef8bitOffset .|. 
@@ -139,27 +151,27 @@ mov_ o1@(R64 dst) o2@(RR64 src offset)
 -- Dereference (dst plus offset): refactor with the other mov?
 mov_ o1@(RR64 dst offset) o2@(R64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
-        rex_w
+        rex_w (Just dst) (Just src)
         emit1 $ 0x89
         emit1 $ modRegRef32bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm32 $ fromIntegral offset
     | min8BitValI <= offset && offset <= max8BitValI = do
-        rex_w
+        rex_w (Just dst) (Just src)
         emit1 $ 0x89
         emit1 $ modRegRef8bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm8  $ fromIntegral offset
 mov_ o1@(RR64 dst offset) o2@(I64 src)
     | offset < min8BitValI || max8BitValI < offset = do 
-        rex_w
+        rex_w Nothing (Just dst)
         emit1 $ 0xC7
         emit1 $ modRegRef32bitOffset .|. index dst
         weirdRSPHack dst
         imm32 $ fromIntegral offset
         imm32 $ fromIntegral src
     | min8BitValI <= offset && offset <= max8BitValI = do
-        rex_w
+        rex_w Nothing (Just dst)
         emit1 $ 0xC7
         emit1 $ modRegRef8bitOffset .|. index dst
         weirdRSPHack dst
@@ -250,25 +262,25 @@ cmp a b = do
           baseByte (R64 _)   (R64 _)    = 0x39
 
 binop ty oe o1@(R64 RAX) o2@(I32 val) = do
-    rex_w
+    rex_w Nothing Nothing
     emit1 $ ty o1 o2
     imm32 val
     asm $ bflush
 binop ty oe o1@(R64 dst) o2@(I32 val) = do
-    rex_w
+    rex_w Nothing (Just dst)
     emit1 $ ty o1 o2
     emit1 $ modReg .|. opcodeExt oe .|. index dst
     imm32 val
     asm $ bflush
 binop ty _ o1@(R64 dst) o2@(RR64 src offset) 
     | min8BitValI <= offset && offset <= max8BitValI = do
-    rex_w
+    rex_w (Just src) (Just dst)
     emit1 $ ty o1 o2
     emit1 $ modRegRef8bitOffset .|. index dst `shiftL` 3 .|. index src
     imm8  $ fromIntegral offset
     asm $ bflush
 binop ty _ o1@(R64 dst) o2@(R64 src) = do
-    rex_w
+    rex_w (Just src) (Just dst)
     emit1 $ ty o1 o2
     emit1 $ mrmByte o2 o1
     asm $ bflush
@@ -286,9 +298,10 @@ ret = do
 
 -- Call the absolute address present in the given register.
 call :: Val -> X86_64 ()
-call r@(R64 _) = do
+call r@(R64 src) = do
     -- Call operates on the call stack register rsp
     docX86 $ "call " ++ show r
+    if isSupReg src then rex Nothing (Just src) else return ()
     emit1 0xFF
     emit1 $ mrmByte rdx r -- rdx is ignored but it's here for NASM compat.
     asm $ bflush
@@ -348,11 +361,13 @@ jge label = do
   
 jmp :: Val -> X86_64 ()
 jmp (R64 reg) = do
+    if isSupReg reg then rex Nothing (Just reg) else return ()
     emit1 0xFF
     emit1 $ 0xC0 .|. bit 5 .|. index reg -- ModRM byte
     asm $ bflush
 
 jmpPtrOffset8 (R64 reg) offset = do
+    if isSupReg reg then rex Nothing (Just reg) else return ()
     emit1 0xFF
     emit1 $ 0x40 .|. bit 5 .|. index reg  -- ModRM byte
     imm8 $ fromIntegral offset
@@ -364,14 +379,14 @@ jmpPtrOffset8 (R64 reg) offset = do
 -- REX.W + 85 /r | TEST r/m64, r64
 test :: Val -> Val -> X86_64()
 test o1@(R64 r1) o2@(R64 r2) = do
-    rex_w
+    rex_w (Just r2) (Just r1)
     emit1 0x85
     emit1 $ mrmByte o2 o1
     asm $ bflush
 
 inc :: Val -> X86_64 ()
 inc r@(R64 dst) = do
-    rex_w
+    rex_w Nothing (Just dst)
     emit1 0xFF
     emit1 $ mrmByte rax r -- the 1nd operand is ignored
     asm $ bflush
@@ -384,10 +399,15 @@ push (I32 val) = do
     emit1 0x68
     imm32 val -- Low-order byte first (checked)
     asm bflush
+push (R64 src)
+    | isSupReg src = do
+    rex Nothing (Just src)
+    emit1 $ 0x50 .|. index src
+    asm bflush
 push (R64 src) = do
     emit1 $ 0x50 .|. index src
     asm bflush
-push (I8 val) = do 
+push (I8 val) = do
     emit1 0x6A -- Pushes an immediate 1 byte value and advances
     imm8  val  -- stack by 8 bytes! (Suprisingly.)
     asm bflush
@@ -402,7 +422,7 @@ jmpLabel label = do
 -- Multiply value in RAX by value from register passed
 mul :: Val -> X86_64 ()
 mul r@(R64 factor) = do
-    rex_w
+    rex_w Nothing (Just factor)
     emit1 0xF7
     emit1 $ modReg .|. opcodeExt 4 .|. index factor
     asm $ bflush
@@ -411,18 +431,18 @@ mul r@(R64 factor) = do
 -- Shift Arithmetic Left
 sal :: Val -> Val -> X86_64 ()
 sal (R64 reg) (I8 1) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xD1
     emit1 $ modReg .|. opcodeExt 4 .|. index reg
     asm $ bflush
 sal (R64 reg) (I8 n) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xC1
     emit1 $ modReg .|. opcodeExt 4 .|. index reg
     imm8 n
     asm $ bflush
 sal (R64 reg) (R8 CL) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xD3
     emit1 $ modReg .|. opcodeExt 4 .|. index reg
     asm $ bflush
@@ -430,18 +450,18 @@ sal (R64 reg) (R8 CL) = do
 -- Shift right
 sar :: Val -> Val -> X86_64 ()
 sar (R64 reg) (I8 1) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xD1
     emit1 $ modReg .|. opcodeExt 7 .|. index reg
     asm $ bflush
 sar (R64 reg) (I8 n) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xC1
     emit1 $ modReg .|. opcodeExt 7 .|. index reg
     imm8 n
     asm $ bflush
 sar (R64 reg) (R8 CL) = do
-    rex_w
+    rex_w Nothing (Just reg)
     emit1 0xD3
     emit1 $ modReg .|. opcodeExt 7 .|. index reg
     asm $ bflush
@@ -449,7 +469,7 @@ sar (R64 reg) (R8 CL) = do
 -- Intel manual P.2504, XOR
 xor :: Val -> Val -> X86_64 ()
 xor o1@(R64 dst) o2@(R64 src) = do -- REX.W + 31 /r | XOR r/m64, r64
-    rex_w
+    rex_w (Just src) (Just dst)
     emit1 0x31
     emit1 $ mrmByte o2 o1
     asm bflush
