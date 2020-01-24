@@ -21,7 +21,6 @@ x86_test_hs.listing: asmgen Makefile
 x86_test: x86_test_nasm.listing x86_test_hs.listing
 	diff --left-column -y $^ && echo "PASS" || echo "FAIL"
 	# Left: NASM binary. Right: Haskell-generated binary.
-	
 
 main: asmgen assemble
 	./asmgen | ./assemble > $@

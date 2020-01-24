@@ -50,7 +50,7 @@ initParamStack = do
 
 mainLang = do
     docLang "TESTS:"
-    x86 $ mov rax (L64 "TEST_SEQUENCE") -- What to interpret
+    x86 $ mov r8 (L64 "TEST_SEQUENCE") -- What to interpret
     x86 $ callLabel "EVAL" -- Eval function
     defineBaseFuns
 

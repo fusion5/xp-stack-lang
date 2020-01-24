@@ -226,7 +226,9 @@ testDefinition = do
     x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
     x86 $ asm $ bflush
     x86 $ asm $ emitLabelRef64 "DICT_PLUS"
+    x86 $ asm $ bflush
     x86 $ asm $ emitLabelRef64 "DICT_EXIT"
+    x86 $ asm $ bflush
 
 defineEval :: Lang ()
 defineEval = do
@@ -236,31 +238,34 @@ defineEval = do
     -- RAX is a pointer to the sequence to be evaluated.
     -- The first entry in the sequence is a dictionary entry.
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
-    docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
-    docLang "Load into r8 the first word in the sequence."
-    docLang "It's a pointer to a 'struct' of definitions with metadata."
-    x86 $ mov rr9 (derefOffset rr8 0)
+    docLang "r8 holds the current sequence of words (dict. pointers) to evaluate."
+    docLang "We use r9 to iterate the words in the sequence."
+    docLang "Initially r9 holds the memory location of the first word:"
+    -- docLang "It's a pointer to a 'struct' of definitions with metadata."
+    x86 $ mov r9 (derefOffset r8 0)
 
     docLang "r9 + 0:  Previous dictionary entry (if any)"
-    docLang "r9 + 8:  Type of dictionary entry (asm or compound)"
-    docLang "r9 + 16: Method body pointer"
+    docLang "r9 + 8:  Type of dictionary entry (asm, words or typedef)"
+    docLang "r9 + 16: Word definition body pointer"
     docLang "r9 + 24: Length of dictionary name (l)"
-    docLang "r9 + 32: Entry name of length l" 
+    docLang "r9 + 32: Name of dictionarly entry of length l" 
 
     docLang "Move the entry type (located at offset r9 + 8) to r10"
-    x86 $ mov rr10 (derefOffset rr9 8)
+    x86 $ mov r10 (derefOffset r9 8)
 
-    docLang "If the entry type equals 0 then evaluate a base function..."
-    x86 $ cmp rr10 (I32 0x00)
+    docLang "If the entry type equals 0 then evaluate an ASM body."
+    x86 $ cmp r10 (I32 0x00)
     x86 $ jeNear "EVAL_BASE_FUNCTION"
 
     x86 $ asm $ setLabel "EVAL_BASE_FUNCTION"
-    docLang "The method body pointer is at offset 16"
-    x86 $ mov rr10 (derefOffset rr9 16)
-    x86 $ call rr10 
+    docLang "Move the method body pointer to r10"
+    docLang "The method body pointer is at r9+16"
+    x86 $ mov r10 (derefOffset r9 16)
+    docLang "Call the method using 'call'."
+    x86 $ call r10 
 
     -- TODO: Move on to the next word in the sequence.
-    x86 $ add rr8 (I32 8)
+    x86 $ add r8 (I32 8)
 
     x86 $ jmpLabel "EVAL" -- Loop
 

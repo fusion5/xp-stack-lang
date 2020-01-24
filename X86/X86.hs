@@ -127,30 +127,34 @@ mov_ o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
     emit1 $ 0x89
     emit1 $ mrmByte o2 o1
 mov_ o1@(R64 dst) o2@(RR64 src offset)
-    -- | offset == 0 = do -- Offset = 0 could be done with a diff command
-    --                                  but we do what nasm does here.
-    | offset < min8BitValI || max8BitValI < offset = do 
+    | offset == 0 && (src /= RBP) = do 
         rex_w (Just dst) (Just src)
         emit1 $ 0x8B
-        emit1 $ modRegRef32bitOffset .|. 
-            (index dst `shiftL` 3)   .|. 
+        emit1 $ modRegRef .|. 
+            (index dst `shiftL` 3)   .|.
             index src
         weirdRSPHack src
-        imm32 $ fromIntegral offset 
+    | offset < min8BitValI || max8BitValI < offset = do
+        rex_w (Just dst) (Just src)
+        emit1 $ 0x8B
+        emit1 $ modRegRef32bitOffset .|.
+            (index dst `shiftL` 3)   .|.
+            index src
+        weirdRSPHack src
+        imm32 $ fromIntegral offset
     | min8BitValI <= offset && offset <= max8BitValI = do
         rex_w (Just dst) (Just src)
         emit1 $ 0x8B
         -- operand 1 (dest)
-        emit1 $ modRegRef8bitOffset .|. 
-            (index dst `shiftL` 3)  .|. 
+        emit1 $ modRegRef8bitOffset .|.
+            (index dst `shiftL` 3)  .|.
             index src
         weirdRSPHack src
         -- operand 2 (src)
-        -- emit1 $ modReg .|. index src
         imm8 $ fromIntegral offset
 -- Dereference (dst plus offset): refactor with the other mov?
 mov_ o1@(RR64 dst offset) o2@(R64 src)
-    | offset < min8BitValI || max8BitValI < offset = do 
+    | offset < min8BitValI || max8BitValI < offset = do
         rex_w (Just dst) (Just src)
         emit1 $ 0x89
         emit1 $ modRegRef32bitOffset .|. (index src `shiftL` 3) .|. index dst
