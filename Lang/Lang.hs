@@ -60,25 +60,50 @@ data Dict =
 -- the definitions of terms in the expression.
 defineDictBase = do
     x86 $ do
-        k <- appendDefinition Nothing  "PDROP"
-        k <- appendDefinition (Just k) "EQ"
-        k <- appendDefinition (Just k) "LT"
-        k <- appendDefinition (Just k) "LTE"
-        k <- appendDefinition (Just k) "GT"
-        k <- appendDefinition (Just k) "GTE"
-        k <- appendDefinition (Just k) "PLUS"
-        k <- appendDefinition (Just k) "MINUS"
-        k <- appendDefinition (Just k) "TIMES"
-        k <- appendDefinition (Just k) "AND"
-        k <- appendDefinition (Just k) "LIT"
-        k <- appendDefinition (Just k) "EXIT"
-        k <- appendDefinition (Just k) "PUSH1"
+        k <- appendASMDefinition Nothing  "PDROP"
+        k <- appendASMDefinition (Just k) "EQ"
+        k <- appendASMDefinition (Just k) "LT"
+        k <- appendASMDefinition (Just k) "LTE"
+        k <- appendASMDefinition (Just k) "GT"
+        k <- appendASMDefinition (Just k) "GTE"
+        k <- appendASMDefinition (Just k) "PLUS"
+        k <- appendASMDefinition (Just k) "MINUS"
+        k <- appendASMDefinition (Just k) "TIMES"
+        k <- appendASMDefinition (Just k) "AND"
+        k <- appendASMDefinition (Just k) "LIT"
+        k <- appendASMDefinition (Just k) "EXIT"
+        k <- appendASMDefinition (Just k) "PUSH1"
+        k <- appendSEQDefinition (Just k) "PUSH3"
         return ()
         
+appendSEQDefinition :: Maybe String -> String -> X86_64 String
+appendSEQDefinition prevLabel bodyLabel = do
+    docX86 $ "Dictionary entry for " ++ bodyLabel
+    let x = "DICT_" ++ bodyLabel
+    asm $ setLabel x
+    case prevLabel of
+        Just l  -> asm $ emitLabelRef64 l
+        Nothing -> imm64 0
+    asm $ bflush
+    docX86 $ "Type:"
+    imm64 1 -- Sequence-based definition (to be evaluated using EVAL)
+    asm $ bflush
+    docX86 $ "Seq address (will the seq reside on the stack also sometimes?):"
+    asm $ emitLabelRef64 $ bodyLabel
+    asm $ bflush
+    -- TODO: throw error if bodyLabel exceeds 255 chars!
+    docX86 $ "Label length:"
+    imm64 $ fromIntegral $ length bodyLabel
+    asm $ bflush
+    docX86 $ "Dictionary entry label:"
+    asm $ emitString bodyLabel
+    asm $ bflush
+    return x
+
 -- This is a sort of struct of C...
-appendDefinition :: Maybe String -> String -> X86_64 String
-appendDefinition prevLabel bodyLabel = do
-    docX86 $ "Dictionary definition of " ++ bodyLabel
+appendASMDefinition :: Maybe String -> String -> X86_64 String
+appendASMDefinition prevLabel bodyLabel = do
+    docX86 $ "Dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     let x = "DICT_" ++ bodyLabel
     -- Previous entry pointer
@@ -87,14 +112,17 @@ appendDefinition prevLabel bodyLabel = do
         Just l  -> asm $ emitLabelRef64 l
         Nothing -> imm64 0
     asm $ bflush
-    imm64 0 -- 0 means it's an ASM-based definition
-            -- 1 means it's an interpreter-based definition.
+    docX86 $ "Type:"
+    imm64 0 -- ASM-based definition
     asm $ bflush
+    docX86 $ "ASM code address:"
     asm $ emitLabelRef64 bodyLabel
     asm $ bflush
     -- TODO: throw error if bodyLabel exceeds 255 chars!
+    docX86 $ "Label length:"
     imm64 $ fromIntegral $ length bodyLabel
     asm $ bflush
+    docX86 $ "Dictionary entry label:"
     asm $ emitString bodyLabel
     asm $ bflush
     return x
@@ -220,14 +248,26 @@ defineLit = defFunBasic fn ty body where
 -- A sequence definition attempt which we want to evaluate.
 testDefinition :: Lang ()
 testDefinition = do
-    x86 $ asm $ setLabel "TEST_SEQUENCE"
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
+    x86 $ asm $ setLabel "TEST"
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH3"
     x86 $ asm $ bflush
-    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
+    x86 $ asm $ emitLabelRef64 "DICT_PLUS"
     x86 $ asm $ bflush
     x86 $ asm $ emitLabelRef64 "DICT_PLUS"
     x86 $ asm $ bflush
     x86 $ asm $ emitLabelRef64 "DICT_EXIT"
+    x86 $ asm $ bflush
+    x86 $ imm64 0 -- Marks the sequence end
+    x86 $ asm $ bflush
+
+    x86 $ asm $ setLabel "PUSH3"
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
+    x86 $ asm $ bflush
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
+    x86 $ asm $ bflush
+    x86 $ asm $ emitLabelRef64 "DICT_PUSH1"
+    x86 $ asm $ bflush
+    x86 $ imm64 0 -- Marks the sequence end
     x86 $ asm $ bflush
 
 defineEval :: Lang ()
@@ -243,6 +283,8 @@ defineEval = do
     docLang "Initially r9 holds the memory location of the first word:"
     -- docLang "It's a pointer to a 'struct' of definitions with metadata."
     x86 $ mov r9 (derefOffset r8 0)
+    x86 $ cmp r9 (I32 0x00)
+    x86 $ jeNear "EVAL_STOP" -- Empty word reached - the sequence ends
 
     docLang "r9 + 0:  Previous dictionary entry (if any)"
     docLang "r9 + 8:  Type of dictionary entry (asm, words or typedef)"
@@ -253,22 +295,41 @@ defineEval = do
     docLang "Move the entry type (located at offset r9 + 8) to r10"
     x86 $ mov r10 (derefOffset r9 8)
 
-    docLang "If the entry type equals 0 then evaluate an ASM body."
+    docLang "Pattern match on the type of dictionary entry:"
     x86 $ cmp r10 (I32 0x00)
-    x86 $ jeNear "EVAL_BASE_FUNCTION"
+    x86 $ jeNear "EVAL_ASM"
+    x86 $ cmp r10 (I32 0x01)
+    x86 $ jeNear "EVAL_WORDS"
 
-    x86 $ asm $ setLabel "EVAL_BASE_FUNCTION"
+    x86 $ asm $ setLabel "EVAL_ASM"
+    docLang "Evaluating assembly"
     docLang "Move the method body pointer to r10"
     docLang "The method body pointer is at r9+16"
     x86 $ mov r10 (derefOffset r9 16)
     docLang "Call the method using 'call'."
     x86 $ call r10 
+    x86 $ jmpLabel "EVAL_STEP_DONE"
 
-    -- TODO: Move on to the next word in the sequence.
+    x86 $ asm $ setLabel "EVAL_WORDS"
+    docLang "Evaluating a sequence of words"
+    docLang "Recursively call EVAL on a sequence."
+    docLang "The sequence to be called is at r9 + 16."
+    docLang "Prepare for eval recursion: save the current r8 on the "
+    docLang "call stack."
+    x86 $ push r8
+    x86 $ mov r8 (derefOffset r9 16)
+    x86 $ callLabel "EVAL" -- Recursion
+    x86 $ pop r8
+    x86 $ jmpLabel "EVAL_STEP_DONE"
+
+    x86 $ asm $ setLabel "EVAL_STEP_DONE"
+    -- TODO: Move on to the next word in the sequence we're evaluating.
     x86 $ add r8 (I32 8)
 
-    x86 $ jmpLabel "EVAL" -- Loop
+    x86 $ mov r9 (derefOffset r8 0)
+    x86 $ jmpLabel "EVAL" -- We've advanced to the next word, repeat the operation.
 
+    x86 $ asm $ setLabel "EVAL_STOP"
     x86 $ ret 
 
 -- Type:      :w64:w64 -> w64
