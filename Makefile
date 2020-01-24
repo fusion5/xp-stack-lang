@@ -6,7 +6,7 @@ asmgen: ELFHeader.hs Main.hs \
 	ghc Main.hs -o $@
 
 x86_test_nasm.listing: asmgen Makefile
-	echo BITS 64 > tmp .nasm
+	echo BITS 64 > tmp.nasm
 	./asmgen test_x86_n >> tmp.nasm
 	nasm -O0 -fbin tmp.nasm -o tmp.bin
 	ndisasm -b 64 tmp.bin > $@
@@ -19,6 +19,7 @@ x86_test_hs.listing: asmgen Makefile
 
 x86_test: x86_test_nasm.listing x86_test_hs.listing
 	diff --left-column -y $^ && echo "PASS" || echo "FAIL"
+	# Left: NASM binary. Right: Haskell-generated binary.
 	
 
 main: asmgen assemble
