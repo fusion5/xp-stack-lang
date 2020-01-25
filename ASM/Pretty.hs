@@ -23,11 +23,13 @@ asmPretty :: ASMState -> String
 asmPretty endASMState = 
     (intercalate "\n" $ map asmCodePretty $ toList $ asm_instr endASMState)
     ++ "\n"
-    ++ legend
-    ++ "\n"
-    ++ "All labels:"
-    ++ "\n"
+    ++ "All labels:\n"
     ++ (intercalate "\n" $ map ppLabelDef $ M.toList $ asm_lbls endASMState)
+    ++ "\n"
+    ++ "All strings:\n"
+    ++ (intercalate "\n" $ map ppLabelDef $ M.toList $ asm_strs endASMState)
+    ++ "\n"
+    ++ legend
 
 ppLabelDef :: (String, Word64) -> String
 ppLabelDef (x, y) = printf "0x%08X %s" y x

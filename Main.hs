@@ -19,6 +19,7 @@ import X86.Tests        -- X86-specific test suite (with NASM commands)
 import Lang.Lang
 import Lang.Datatypes
 import Lang.Types
+import Lang.Debug
 
 import Data.Maybe (listToMaybe)
 import Data.List (intercalate)
@@ -50,7 +51,20 @@ initParamStack = do
 
 mainLang = do
     docLang "Read from stdin the dict. entry that we should interpret."
-    x86 $ callLabel "READ_LINE"
+    x86 $ callLabel "READ_WORD"
+
+    assertPtop 1 "READ_WORD should be successful"
+    pdrop 1
+
+    assertPtop 3 "Please input 3 chars"
+    pdrop 1
+    assertPtopW8 0x63 "Please input c third"
+    pdropW8 1
+    assertPtopW8 0x62 "Please input b second"
+    pdropW8 1
+    assertPtopW8 0x61 "Please input a first"
+
+    docLang "Consume the word on the stack in the dictionary and push it."
 
     docLang "TESTS:"
     x86 $ mov r8 (L64 "TEST") -- What to interpret
@@ -68,11 +82,13 @@ mainASM = do
     runX86 mainX86
 
 assembly = do
-    elf64Header $ programHeader vaddr_offset mainASM 
-    replaceProgSizeWithBytes
-    replaceLabelsWithBytes vaddr_offset
-    documentation "The string section with all collected strings:"
-    emitStrings
+    elf64Header $ programHeader vaddr_offset $ do
+        mainASM 
+        documentation "The string table with all collected strings:"
+        emitStringTable
+    replaceProgSize
+    replaceLabels  vaddr_offset
+    replaceStrRefs vaddr_offset
         where vaddr_offset = 0xC0000000
 
 doAction f as = 

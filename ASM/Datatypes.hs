@@ -40,6 +40,9 @@ emitHasLabel (SRelOffsetToLabel32 _ l) = Just l
 emitHasLabel (SRelOffsetToLabel8 _ l)  = Just l
 emitHasLabel _                         = Nothing
 
+emitHasStrRef (SStrRef64 s) = Just s
+emitHasStrRef _ = Nothing
+
 {-
 lenBytesCode :: ASMCode -> Integer
 lenBytesCode (ASMEmit _ ws) = sum $ Prelude.map lenBytes ws

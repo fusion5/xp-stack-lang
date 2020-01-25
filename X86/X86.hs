@@ -11,9 +11,6 @@ import Data.Bits
 import Data.Binary.Put (putWord64le, putWord32le)
 import Data.Int
 
-derefOffset :: Val -> Integer -> Val
-derefOffset (R64 r) offset = RR64 r offset
-derefOffset _ _ = error "References with Offsets can only be applied to registers"
 
 -- Documentation at the X86 programming level (asm instructions)
 
@@ -58,8 +55,8 @@ rex_ mayOper1 mayOper2 = word_rex
 {- These modes are the first 2 bits of the ModRM Byte
  - See Intel Manual P.528, ModR/M byte definition
  - ModRM byte breakup:
- -   7  6|5    4     3|2 1 0 
- - [ MOD | Reg/Opcode | R/M ]
+ -   7   6 | 5   4   3 | 2   1   0 
+ - [ MOD   | Reg/Opcode| R/M       ]
  - The first 2 bits of the ModRM byte indicate where to get operand(s)
  - from. They refer to the final three bits of the ModRM register, i.e.
  - the (R/M) area.
@@ -161,14 +158,19 @@ mov_ o1@(R64 dst) o2@(RR64 src offset)
         imm8 $ fromIntegral offset
 -- Dereference (dst plus offset): refactor with the other mov?
 mov_ o1@(RR64 dst offset) o2@(R64 src)
+    | offset == 0 = do
+        rex_w (Just src) (Just dst)
+        emit1 $ 0x89
+        emit1 $ modRegRef .|. (index src `shiftL` 3) .|. index dst
+        weirdRSPHack dst
     | offset < min8BitValI || max8BitValI < offset = do
-        rex_w (Just dst) (Just src)
+        rex_w (Just src) (Just dst)
         emit1 $ 0x89
         emit1 $ modRegRef32bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm32 $ fromIntegral offset
     | min8BitValI <= offset && offset <= max8BitValI = do
-        rex_w (Just dst) (Just src)
+        rex_w (Just src) (Just dst)
         emit1 $ 0x89
         emit1 $ modRegRef8bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst

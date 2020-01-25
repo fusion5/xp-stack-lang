@@ -45,7 +45,7 @@ defineBaseFuns = do
     defineRdChrLinux
     defineWrChrLinux
 
-    defineRdLineLinux
+    defineRdWordLinux
 
     defineLit 
     definePush1 -- Dummy test function that just pushes constant 1
@@ -136,10 +136,10 @@ appendASMDefinition prevLabel bodyLabel = do
     asm $ bflush
     return x
 
-defineRdLineLinux :: Lang ()
-defineRdLineLinux = defFunBasic funName ty body
+defineRdWordLinux :: Lang ()
+defineRdWordLinux = defFunBasic funName ty body
   where
-    funName = "READ_LINE"
+    funName = "READ_WORD"
     ty      = undefined
     body    = do
         docLang "Reads characters until a new line char is read."
@@ -150,41 +150,44 @@ defineRdLineLinux = defFunBasic funName ty body
         docLang "r15 counts the chars that are successfully read."
         x86 $ xor r15 r15
 
-        x86 $ asm $ setLabel "READ_LINE_WHILE"
+        x86 $ asm $ setLabel "READ_WORD_WHILE"
 
         docLang "Allocate 8 bytes on the param stack:"
         ppush $ I8 0x00
 
         docLang "Read 1 char:"
-        x86 $ mov  rdx $ I64 0x01 
+        x86 $ mov rdx $ I64 0x01 
         docLang "File descriptor 0 <-> read from stdin:"
-        x86 $ xor  rbx rbx
+        x86 $ xor rbx rbx
         docLang "Use the linux_sys_read system call:"
-        x86 $ mov  rax $ I64 $ fromIntegral linux_sys_read
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
         docLang "Where to write? To the top of the param stack:"
-        x86 $ mov  rcx rsi
+        x86 $ mov rcx rsi
         x86 $ int
 
-        x86 $ cmp rax $ I32 0x00
-        x86 $ je "READ_LINE_ERROR"
+        -- x86 $ callLabel "WRITE_CHAR"
 
-        docLang "If the char we just read is a newline, break the loop:"
-        ptopW8 rax
-        x86 $ cmp rax $ I32 0x0A
-        x86 $ je "READ_LINE_BREAK"
+        x86 $ cmp rax $ I32 0x00
+        x86 $ je "READ_WORD_ERROR"
+
+        docLang "If the char we just read is a space, break the loop:"
+        x86 $ xor rax rax
+        ptopW8 al
+        x86 $ cmp rax $ I32 0x20
+        x86 $ je "READ_WORD_BREAK"
         
         x86 $ inc r15
 
         docLang  "Repeat the operation"
-        x86 $ jmpLabel "READ_LINE_WHILE"
+        x86 $ jmpLabel "READ_WORD_WHILE"
 
-        x86 $ asm $ setLabel "READ_LINE_BREAK"
+        x86 $ asm $ setLabel "READ_WORD_BREAK"
         ppopW8 al
         ppush $ r15   -- Num of chars read
         ppush $ I64 1 -- Success
         x86 $ ret
 
-        x86 $ asm $ setLabel "READ_LINE_ERROR"
+        x86 $ asm $ setLabel "READ_WORD_ERROR"
         ppush $ r15   -- Num of chars read
         ppush $ I64 0 -- Error
         x86 $ ret
@@ -253,18 +256,18 @@ defineExit = defFunBasic "EXIT" ty body
 -- Side effect, prints buf on stdout.
 defineWrChrLinux :: Lang ()
 defineWrChrLinux = defFunBasic "WRITE_CHAR" ty body
-    where 
-        ty   = TyFunc "WRITE_CHAR" baseWord baseWord
-        body = do
-            x86 $ mov rdx $ I64 1 -- How many bytes to write?
-            x86 $ mov rax $ I64 $ fromIntegral linux_sys_write
-            x86 $ mov rbx $ I64 $ fromIntegral linux_stdout 
-            -- read chars from the top of the params stack, i.e. from our buffer.
-            x86 $ mov rcx rsi
-            x86 $ int
-            pdrop 1   -- Drop the top of the stack which was the char
-                      -- we've just printed.
-            ppush rax -- The putchar result, how many bytes we've written
+  where 
+    ty   = TyFunc "WRITE_CHAR" baseWord baseWord
+    body = do
+        x86 $ mov rdx $ I64 1 -- How many bytes to write?
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_write
+        x86 $ mov rbx $ I64 $ fromIntegral linux_stdout 
+        -- read chars from the top of the params stack, i.e. from our buffer.
+        x86 $ mov rcx rsi
+        x86 $ int
+        pdrop 1   -- Drop the top of the stack which was the char
+                  -- we've just printed.
+        ppush rax -- The putchar result, how many bytes we've written
 
 -- Type:      :w64:w64 -> :w64
 -- Operation: :a  :b   -> :a<<b
@@ -345,7 +348,7 @@ defineEval = do
     -- RAX is a pointer to the sequence to be evaluated.
     -- The first entry in the sequence is a dictionary entry.
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
-    docLang "r8 holds the current sequence of words (dict. pointers) to evaluate."
+    docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
     docLang "We use r9 to iterate the words in the sequence."
     docLang "Initially r9 holds the memory location of the first word:"
     -- docLang "It's a pointer to a 'struct' of definitions with metadata."
@@ -394,8 +397,6 @@ defineEval = do
 
     -- TODO: Move on to the next word in the sequence we're evaluating.
     x86 $ add r8 (I32 8)
-
-    x86 $ mov r9 (derefOffset r8 0)
     x86 $ jmpLabel "EVAL" -- We've advanced to the next word, repeat the operation.
 
     x86 $ asm $ setLabel "EVAL_STOP"
@@ -452,6 +453,10 @@ pdrop :: Int32 -> Lang ()
 pdrop numW64s =
     x86 $ add rsi $ I32 $ fromIntegral $ numW64s * 8
 
+pdropW8 :: Int32 -> Lang ()
+pdropW8 numW8s = 
+    x86 $ add rsi $ I32 $ fromIntegral $ numW8s
+
 -- Parameter stack pop
 ppop :: Val -> Lang ()
 ppop dst64@(R64 _) = do
@@ -463,8 +468,9 @@ ppeer numW64s dst =
     x86 $ mov dst $ derefOffset rsi (fromIntegral $ numW64s * 8)
 
 ppeerW8 :: Int32 -> Val -> Lang ()
-ppeerW8 numW8s dst =
+ppeerW8 numW8s dst@(R8 r)  =
     x86 $ mov dst $ derefOffset rsi (fromIntegral numW8s)
+ppeerW8 _ _ = error "ppeerW8 requires an 8-bit register as parameter"
 
 ptopW8 :: Val -> Lang ()
 ptopW8 = ppeerW8 0

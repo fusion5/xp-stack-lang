@@ -12,7 +12,7 @@ import Control.Monad (ap, liftM)
 newtype X86_64 a = X86_64 { runX86 :: ASM a }
     deriving (Monad)
 
-asm :: ASM () -> X86_64 ()
+asm :: ASM a -> X86_64 a
 asm act = X86_64 (act)
 
 instance Functor X86_64 where
@@ -22,6 +22,10 @@ instance Applicative X86_64 where
     pure   = return
     (<*>)  = ap
 
+derefOffset :: Val -> Integer -> Val
+derefOffset (R64 r) offset = RR64 r offset
+derefOffset _ _ = error 
+    "References with Offsets can only be applied to registers"
 {-
 instance Monad X86_64 where
     (>>=) (X86_64 asmst) (next) = next asmst
@@ -37,9 +41,12 @@ data Val         -- Corresponds to addressing methods
   | R64   Reg64   -- Register
   | R8    Reg8    -- Register, 8 bits
   | A     Word64  -- Addr
-  | RR64          -- Refer to memory at "address from register plus offset".
+  | RR64  -- Refer to memory at "address from register plus offset"
           Reg64   -- Register
           Integer -- Offset
+{-| RR8   -- Refer to memory at "addres from register plus offset"
+          Reg64   -- Register
+          Integer -- Offset -}
   | L64   String  -- Label
   | S64   String  -- Reference to the strings table
   deriving (Eq)

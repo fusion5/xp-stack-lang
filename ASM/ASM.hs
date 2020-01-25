@@ -31,10 +31,31 @@ emits xs = do
 -}
 
 emitStringRef :: String -> ASM ()
-emitStringRef x = bemit [SStrRef64 x]
+emitStringRef s = bemit [SStrRef64 s]
 
+{-
 emitString :: String -> ASM ()
-emitString s = bemit (Prelude.map (SWord8 . ascii) s)
+emitString str = do
+    -- Associate string s with the current offset in the 
+    -- strings table:
+    modify associateStringOffset
+    emitString str
+    where associateStringOffset s = s {
+        asm_strs = M.insert str (asm_offset s) (asm_strs s)
+    }
+-}
+-- Immediately emit a string in place
+emitString :: String -> ASM ()
+emitString str = 
+    bemit (Prelude.map (SWord8 . ascii) str)
+
+emitStringInTable :: String -> ASM ()
+emitStringInTable str = do
+    modify associateStringOffset
+    bemit $ Prelude.map (SWord8 . ascii) str
+    where associateStringOffset state = state {
+        asm_strs = M.insert str (asm_offset state) (asm_strs state)
+    }
 
 emitProgSize64 :: ASM ()
 emitProgSize64 = bemit [SProgSize64]
@@ -186,17 +207,7 @@ showWord8 w = hex h:hex l:[]
     hex 15 = 'F'
     hex _  = ' '
 
-{-
-emitString :: String -> ASM ()
-emitString str = do
-    -- Associate string s with the current offset in the 
-    -- strings table:
-    modify associateStringOffset
-    emitString str
-    where associateStringOffset s = s {
-        asm_strs = M.insert str (asm_offset s) (asm_strs s)
-    }
--}
+
 max64BitUnsigned = fromIntegral (maxBound::Word64)
 max32BitUnsigned = fromIntegral (maxBound::Word32)
 
@@ -206,10 +217,11 @@ max8BitValI = fromIntegral (maxBound::Int8)
 min8BitValI :: Integer
 min8BitValI = fromIntegral (minBound::Int8)
     
-emitStrings :: ASM () 
-emitStrings = do
+emitStringTable :: ASM () 
+emitStringTable = do
     s <- get
-    mapM emitString (keys $ asm_strs s)
+    mapM emitStringInTable (keys $ asm_strs s)
+    bflush
     return ()
 
 ----------------------
@@ -233,16 +245,16 @@ getLabeledAddresses = do
 -- address in the program data
 -- This is x86 and byte-order dependent! Maybe it belongs to the X86 module.
 replaceWithAbsVMemAddr64 :: String -> Word64 -> Word64 -> ASM [Word8]
-replaceWithAbsVMemAddr64 label vmemOffset64 labelAddr64
-    | vmemOffset64 + labelAddr64 <= max64BitUnsigned = 
-        return $ bytes putWord64le $ vmemOffset64 + labelAddr64
+replaceWithAbsVMemAddr64 label vmemOffs64 labelAddr64
+    | vmemOffs64 + labelAddr64 <= max64BitUnsigned = 
+        return $ bytes putWord64le $ vmemOffs64 + labelAddr64
 replaceWithAbsVMemAddr64 label _ _ =
     error $ "A 64-bit label reference is outside of memory bounds: " ++ label
 
 replaceWithAbsVMemAddr32 :: String -> Word64 -> Word64 -> ASM [Word8]
-replaceWithAbsVMemAddr32 label vmemOffset64 labelAddr64
-    | vmemOffset64 + labelAddr64 <= max32BitUnsigned = 
-        return $ bytes putWord32le $ fromIntegral $ vmemOffset64 + labelAddr64
+replaceWithAbsVMemAddr32 label vmemOffs64 labelAddr64
+    | vmemOffs64 + labelAddr64 <= max32BitUnsigned = 
+        return $ bytes putWord32le $ fromIntegral $ vmemOffs64 + labelAddr64
 replaceWithAbsVMemAddr32 label _ _ =
     error $ "A 32-bit label reference is outside of memory bounds: " ++ label
 
@@ -286,17 +298,17 @@ replaceLabelEmits vmemOff64 addrs emit rest =
             replacementEmits <- repl lbl64 emit
             return $ emit:Prelude.map SWord8 replacementEmits ++ rest
     where 
-        repl lbl64 (SProgLabel64 l) =
-            replaceWithAbsVMemAddr64 l vmemOff64 lbl64
-        repl lbl64 (SProgLabel32 l) =
-            replaceWithAbsVMemAddr32 l vmemOff64 lbl64
-        repl lbl64 (SRelOffsetToLabel32 currOff64 l) =
-            -- The offset is calculated from just AFTER the label,
-            -- i.e. from currOff64 plus the label reference length,
-            -- which for 32 bits is 4.
-            replaceWithRelOffsetToLabel32 l lbl64 (currOff64 + 4)
-        repl lbl64 (SRelOffsetToLabel8 currOff64 l) =
-            replaceWithRelOffsetToLabel8 l lbl64 (currOff64 + 1)
+      repl lbl64 (SProgLabel64 l) =
+        replaceWithAbsVMemAddr64 l vmemOff64 lbl64
+      repl lbl64 (SProgLabel32 l) =
+        replaceWithAbsVMemAddr32 l vmemOff64 lbl64
+      repl lbl64 (SRelOffsetToLabel32 currOff64 l) =
+        -- The offset is calculated from just AFTER the label,
+        -- i.e. from currOff64 plus the label reference length,
+        -- which for 32 bits is 4.
+        replaceWithRelOffsetToLabel32 l lbl64 (currOff64 + 4)
+      repl lbl64 (SRelOffsetToLabel8 currOff64 l) =
+        replaceWithRelOffsetToLabel8 l lbl64 (currOff64 + 1)
 
 -- Replace label references.
 replaceLabelsCode :: Word64              -- Virtual memory offset
@@ -310,8 +322,8 @@ replaceLabelsCode vmemOffset addrs (ASMEmit o es) rest = do
     where f = replaceLabelEmits vmemOffset addrs
 replaceLabelsCode _ _ any rest = return $ any <| rest
 
-replaceLabelsWithBytes :: Word64 -> ASM ()
-replaceLabelsWithBytes vmemOffset = do
+replaceLabels :: Word64 -> ASM ()
+replaceLabels vmemOffset = do
     s        <- get
     labelMap <- getLabeledAddresses
     modify (\s -> s { asm_lbls = labelMap })
@@ -326,8 +338,8 @@ replaceLabelsWithBytes vmemOffset = do
 -- Program size resolution --
 -----------------------------
 
-replaceProgSizeWithBytes :: ASM ()
-replaceProgSizeWithBytes = do
+replaceProgSize :: ASM ()
+replaceProgSize = do
     s <- get
     new_asm_instr <- foldrM 
         (replaceProgSizeCode (asm_offset s))
@@ -352,3 +364,42 @@ replaceProgSizeEmit progSize (SProgSize64) rest =
   where
     words = Prelude.map SWord8 (bytes putWord64le $ fromIntegral $ progSize)
 replaceProgSizeEmit progSize emit rest = return $ emit:rest
+
+-----------------------------
+-- STRING TABLE RESOLUTION --
+-----------------------------
+-- It's often useful in assembly to have a string database. It doesn't
+-- necessarily have to hold just ascii strings, it could be anything that needs
+-- to be available in memory at program startup.
+
+replaceStringRefEmits vmemOff64 addrs emit rest =
+    case emitHasStrRef emit of
+      Nothing -> return $ emit:rest
+      Just s  -> 
+        case M.lookup s addrs of
+          Nothing   -> error $ "String reference not found: " ++ s     
+          Just s64r -> do
+            let ref = bytes putWord64le $ vmemOff64 + s64r
+            return $ emit:Prelude.map SWord8 ref ++ rest
+
+replaceStrings_ :: Word64              -- Virtual memory offset
+                -> M.Map String Word64 -- String addresses
+                -> ASMCode
+                -> S.Seq ASMCode
+                -> ASM (S.Seq ASMCode)
+replaceStrings_ vmemOffs64 addrs (ASMEmit o es) rest = do
+    k <- foldrM f [] es
+    return $ ASMEmit o k <| rest
+    where f = replaceStringRefEmits vmemOffs64 addrs
+replaceStrings_ _ _ any rest = return $ any <| rest
+
+replaceStrRefs :: Word64 -> ASM ()
+replaceStrRefs vmemOffs64 = do
+    s <- get
+    let stringMap = asm_strs s
+    new_asm_instr <- foldrM
+        (replaceStrings_ vmemOffs64 stringMap)
+        S.empty
+        (asm_instr s)
+    modify (\s -> s { asm_instr = new_asm_instr })
+    return ()
