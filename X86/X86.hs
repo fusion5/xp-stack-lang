@@ -404,6 +404,13 @@ inc r@(R64 dst) = do
     emit1 $ mrmByte rax r -- the 1nd operand is ignored
     asm $ bflush
 
+dec :: Val -> X86_64 ()
+dec r@(R64 dst) = do
+    rex_w Nothing (Just dst)
+    emit1 0xFF
+    emit1 $ mrmByte rax r .|. opcodeExt 1
+    asm $ bflush
+
 -- Push word, doubleword or quadword onto the stack
 push :: Val -> X86_64 ()
 push (I64 val) = error $ "Unable to push a 64 bit literal! " ++

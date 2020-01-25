@@ -18,6 +18,19 @@ import Lang.Linux
 
 import Data.Int
 import Data.Word
+import qualified Data.Bits as B
+
+-- String hash parameters
+fnvOffsetBasis = 0xCBF29CE484222325
+fnvPrime       = 0x100000001B3
+
+fnvFold :: Bool -> Word8 -> Word64 -> Word64
+fnvFold False x h = (fnvPrime * h) `B.xor` fromIntegral x
+fnvFold True  x h = fnvPrime * (h  `B.xor` fromIntegral x)
+
+-- A helper function to compute a fnv-1 hash
+fnv1 :: [Word8] -> Word64
+fnv1 = foldr (fnvFold False) fnvOffsetBasis
 
 instance Documentation (Lang ()) where
     doc = x86 . doc
@@ -45,7 +58,9 @@ defineBaseFuns = do
     defineRdChrLinux
     defineWrChrLinux
 
-    defineRdWordLinux
+    defineRdTermLinux
+
+    defineHashTerm
 
     defineLit 
     definePush1 -- Dummy test function that just pushes constant 1
@@ -121,6 +136,8 @@ appendASMDefinition prevLabel bodyLabel = do
         Just l  -> asm $ emitLabelRef64 l
         Nothing -> imm64 0
     asm $ bflush
+    docX86 $ "Hash: TODO"
+    -- TODO: Add the hash to assist in the term search!
     docX86 $ "Type:"
     imm64 0 -- ASM-based definition
     asm $ bflush
@@ -136,58 +153,93 @@ appendASMDefinition prevLabel bodyLabel = do
     asm $ bflush
     return x
 
-defineRdWordLinux :: Lang ()
-defineRdWordLinux = defFunBasic funName ty body
+defineHashTerm :: Lang ()
+defineHashTerm = defFunBasic funName ty body
   where
-    funName = "READ_WORD"
-    ty      = undefined
+    -- Improve: Is HASH_TERM expressible as a sequence of more basic words?
+    funName = "HASH_TERM"
+    ty      = undefined -- Unexpressible atm.
     body    = do
-        docLang "Reads characters until a new line char is read."
-        docLang "It leaves on the stack an array of w8 followed by a"
+        docLang "Given a word on the stack, compute its hash. This helps to"
+        docLang "compare words for equality when searching the dictionary."
+        docLang "Trying out the (simple) FNV Hash function from Wikipedia"
+        docLang "RBX holds the length to iterate."
+        docLang "E.g. 'cba' has hash 15626587013303479755"
+        ppop rbx
+        docLang "RAX holds the hash."
+        x86 $ mov rax $ I64 fnvOffsetBasis
+
+        x86 $ asm $ setLabel "HASH_TERM_WHILE"
+        do 
+            x86 $ cmp rbx $ I32 0
+            x86 $ jeNear "HASH_TERM_BREAK"
+            x86 $ mov rcx (I64 fnvPrime)
+            x86 $ mul rcx
+            x86 $ xor rcx rcx -- Zeroing rcx is necessary
+            ppopW8 cl
+            x86 $ xor rax rcx
+            x86 $ dec rbx
+            x86 $ jmpLabel "HASH_TERM_WHILE"
+        x86 $ asm $ setLabel "HASH_TERM_BREAK"
+
+        ppush rax
+        x86 $ ret
+
+
+defineRdTermLinux :: Lang ()
+defineRdTermLinux = defFunBasic funName ty body
+  where
+    funName = "READ_TERM"
+    ty      = undefined -- Unexpressible atm.
+    body    = do
+        docLang "Reads characters until a space or a new line char is read."
+        docLang "It pushes on the stack an array of w8 then it pushes a"
         docLang "w64 indicating how many chars have been read,"
         docLang "followed by a w64 indicating success or failure."
 
         docLang "r15 counts the chars that are successfully read."
         x86 $ xor r15 r15
 
-        x86 $ asm $ setLabel "READ_WORD_WHILE"
-
-        docLang "Allocate 8 bytes on the param stack:"
-        ppush $ I8 0x00
-
-        docLang "Read 1 char:"
+        docLang "Prepare registers for the system call:"
+        docLang "We'll always read 1 char:"
         x86 $ mov rdx $ I64 0x01 
-        docLang "File descriptor 0 <-> read from stdin:"
+        docLang "Always use file descriptor 0 (stdin):"
         x86 $ xor rbx rbx
-        docLang "Use the linux_sys_read system call:"
-        x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-        docLang "Where to write? To the top of the param stack:"
-        x86 $ mov rcx rsi
-        x86 $ int
 
-        -- x86 $ callLabel "WRITE_CHAR"
+        do  x86 $ asm $ setLabel "READ_TERM_WHILE"
+            docLang "Use the linux_sys_read system call:"
+            x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
 
-        x86 $ cmp rax $ I32 0x00
-        x86 $ je "READ_WORD_ERROR"
+            docLang "Allocate 8 bytes on the param stack:"
+            ppush $ I8 0x00
 
-        docLang "If the char we just read is a space, break the loop:"
-        x86 $ xor rax rax
-        ptopW8 al
-        x86 $ cmp rax $ I32 0x20
-        x86 $ je "READ_WORD_BREAK"
-        
-        x86 $ inc r15
+            docLang "Where to write? To the top of the param stack:"
+            x86 $ mov rcx rsi
+            x86 $ int
 
-        docLang  "Repeat the operation"
-        x86 $ jmpLabel "READ_WORD_WHILE"
+            x86 $ cmp rax $ I32 0x00
+            x86 $ je "READ_TERM_ERROR"
 
-        x86 $ asm $ setLabel "READ_WORD_BREAK"
+            docLang "If the char we just read is a space or eol, break the loop:"
+            x86 $ xor rax rax
+            ptopW8 al
+            x86 $ cmp rax $ I32 0x20
+            x86 $ je "READ_TERM_BREAK"
+            x86 $ cmp rax $ I32 0x0A
+            x86 $ je "READ_TERM_BREAK"
+            
+            x86 $ inc r15
+
+            docLang  "Repeat the operation"
+            x86 $ jmpLabel "READ_TERM_WHILE"
+
+        x86 $ asm $ setLabel "READ_TERM_BREAK"
         ppopW8 al
         ppush $ r15   -- Num of chars read
         ppush $ I64 1 -- Success
         x86 $ ret
 
-        x86 $ asm $ setLabel "READ_WORD_ERROR"
+        x86 $ asm $ setLabel "READ_TERM_ERROR"
         ppush $ r15   -- Num of chars read
         ppush $ I64 0 -- Error
         x86 $ ret
