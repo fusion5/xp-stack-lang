@@ -69,7 +69,7 @@ defineBaseFuns = do
 
     defineEval
 
-    pushDictBase
+    pushInitialDictionary
     testSEQDefinitions
 
 data Dict = 
@@ -83,23 +83,24 @@ data Dict =
 -- of a (k, prev) := body address
 -- When interpreting an expression, we use the dictionary entries to find
 -- the definitions of terms in the expression.
-pushDictBase = do
-    do
-        k <- pushASMDef Nothing  "PDROP"
-        k <- pushASMDef (Just k) "EQ"
-        k <- pushASMDef (Just k) "LT"
-        k <- pushASMDef (Just k) "LTE"
-        k <- pushASMDef (Just k) "GT"
-        k <- pushASMDef (Just k) "GTE"
-        k <- pushASMDef (Just k) "PLUS"
-        k <- pushASMDef (Just k) "MINUS"
-        k <- pushASMDef (Just k) "TIMES"
-        k <- pushASMDef (Just k) "AND"
-        k <- pushASMDef (Just k) "LIT"
-        k <- pushASMDef (Just k) "EXIT"
-        k <- pushASMDef (Just k) "PUSH1"
-        k <- pushSEQDef (Just k) "PUSH3"
-        return ()
+pushInitialDictionary = do
+    docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
+    x86 $ mov r11 $ I64 0
+    k <- pushASMDef Nothing  "PDROP"
+    k <- pushASMDef (Just k) "EQ"
+    k <- pushASMDef (Just k) "LT"
+    k <- pushASMDef (Just k) "LTE"
+    k <- pushASMDef (Just k) "GT"
+    k <- pushASMDef (Just k) "GTE"
+    k <- pushASMDef (Just k) "PLUS"
+    k <- pushASMDef (Just k) "MINUS"
+    k <- pushASMDef (Just k) "TIMES"
+    k <- pushASMDef (Just k) "AND"
+    k <- pushASMDef (Just k) "LIT"
+    k <- pushASMDef (Just k) "EXIT"
+    k <- pushASMDef (Just k) "PUSH1"
+    k <- pushSEQDef (Just k) "PUSH3"
+    return ()
         
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
 appendSEQDefinition prevLabel bodyLabel = do
@@ -157,29 +158,32 @@ appendASMDefinition prevLabel bodyLabel = do
     asm $ bflush
     return x
 
--- push a dictionary definition on the parameters stack
+-- push a term in the dictionary and on the parameters stack as well..
+-- We don't actually know the previous label so we should be using r11!
 pushASMDef :: Maybe String -> String -> Lang String
 pushASMDef prevLabel bodyLabel = do
     docLang $ "Dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     let x = "DICT_" ++ bodyLabel
     x86 $ asm $ setLabel x
-    docLang $ "Label:"
+    docLang "Label:"
     mapM ppush $ map (I8 . ascii) bodyLabel
-    docLang $ "Label length:"
+    docLang "Label length:"
     ppush $ I32 $ fromIntegral $ length bodyLabel
-    docLang $ "ASM or term sequence address in memory:"
+    docLang "ASM or term sequence address in memory:"
     x86 $ mov rax $ L64 bodyLabel
     ppush rax
-    docLang $ "Type (0 means it's an ASM-based definition):"
+    docLang "Type (0 means it's an ASM-based definition):"
     ppush $ I32 0
-    docLang $ "Hash (for easier search):"
+    docLang "Hash (for easier search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
     ppush rax
-    docLang $ "Previous entry pointer (TODO: use r11):"
-    x86 $ mov rax $ case prevLabel of Just l  -> L64 l
-                                      Nothing -> I64 0
-    ppush rax
+    docLang "Previous entry pointer (TODO: use r11):"
+    ppush r11
+    docLang "Set the dictionary pointer as the top of the stack, since"
+    docLang "the stack now holds a dictionary definition which we won't"
+    docLang "deallocate!"
+    mov r11 rsi
     return x
 
 pushSEQDef :: Maybe String -> String -> Lang String
