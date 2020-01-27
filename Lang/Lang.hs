@@ -67,9 +67,10 @@ defineBaseFuns = do
 
     defineExit
 
-    defineDictBase
     defineEval
-    testDefinition 
+
+    pushDictBase
+    testSEQDefinitions
 
 data Dict = 
     Entry (Maybe Word64) -- Pointer to the rest of the dictionary, if any.
@@ -82,22 +83,22 @@ data Dict =
 -- of a (k, prev) := body address
 -- When interpreting an expression, we use the dictionary entries to find
 -- the definitions of terms in the expression.
-defineDictBase = do
-    x86 $ do
-        k <- appendASMDefinition Nothing  "PDROP"
-        k <- appendASMDefinition (Just k) "EQ"
-        k <- appendASMDefinition (Just k) "LT"
-        k <- appendASMDefinition (Just k) "LTE"
-        k <- appendASMDefinition (Just k) "GT"
-        k <- appendASMDefinition (Just k) "GTE"
-        k <- appendASMDefinition (Just k) "PLUS"
-        k <- appendASMDefinition (Just k) "MINUS"
-        k <- appendASMDefinition (Just k) "TIMES"
-        k <- appendASMDefinition (Just k) "AND"
-        k <- appendASMDefinition (Just k) "LIT"
-        k <- appendASMDefinition (Just k) "EXIT"
-        k <- appendASMDefinition (Just k) "PUSH1"
-        k <- appendSEQDefinition (Just k) "PUSH3"
+pushDictBase = do
+    do
+        k <- pushASMDef Nothing  "PDROP"
+        k <- pushASMDef (Just k) "EQ"
+        k <- pushASMDef (Just k) "LT"
+        k <- pushASMDef (Just k) "LTE"
+        k <- pushASMDef (Just k) "GT"
+        k <- pushASMDef (Just k) "GTE"
+        k <- pushASMDef (Just k) "PLUS"
+        k <- pushASMDef (Just k) "MINUS"
+        k <- pushASMDef (Just k) "TIMES"
+        k <- pushASMDef (Just k) "AND"
+        k <- pushASMDef (Just k) "LIT"
+        k <- pushASMDef (Just k) "EXIT"
+        k <- pushASMDef (Just k) "PUSH1"
+        k <- pushSEQDef (Just k) "PUSH3"
         return ()
         
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
@@ -130,27 +131,79 @@ appendASMDefinition prevLabel bodyLabel = do
     docX86 $ "Dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     let x = "DICT_" ++ bodyLabel
-    -- Previous entry pointer
     asm $ setLabel x
+    docX86 $ "Previous entry ptr:"
     case prevLabel of
         Just l  -> asm $ emitLabelRef64 l
         Nothing -> imm64 0
     asm $ bflush
-    docX86 $ "Hash: TODO"
+    docX86 $ "Hash:"
+    imm64 $ fnv1 $ map ascii bodyLabel
+    asm $ bflush
     -- TODO: Add the hash to assist in the term search!
     docX86 $ "Type:"
-    imm64 0 -- ASM-based definition
+    imm64 0 -- 0 means it's an ASM-based definition
     asm $ bflush
     docX86 $ "ASM code address:"
     asm $ emitLabelRef64 bodyLabel
     asm $ bflush
     -- TODO: throw error if bodyLabel exceeds 255 chars!
-    docX86 $ "Label length:"
-    imm64 $ fromIntegral $ length bodyLabel
-    asm $ bflush
+
     docX86 $ "Dictionary entry label:"
     asm $ emitString bodyLabel
     asm $ bflush
+    docX86 $ "Label length:"
+    imm64 $ fromIntegral $ length bodyLabel
+    asm $ bflush
+    return x
+
+-- push a dictionary definition on the parameters stack
+pushASMDef :: Maybe String -> String -> Lang String
+pushASMDef prevLabel bodyLabel = do
+    docLang $ "Dictionary entry for " ++ bodyLabel
+    -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
+    let x = "DICT_" ++ bodyLabel
+    x86 $ asm $ setLabel x
+    docLang $ "Label:"
+    mapM ppush $ map (I8 . ascii) bodyLabel
+    docLang $ "Label length:"
+    ppush $ I32 $ fromIntegral $ length bodyLabel
+    docLang $ "ASM or term sequence address in memory:"
+    x86 $ mov rax $ L64 bodyLabel
+    ppush rax
+    docLang $ "Type (0 means it's an ASM-based definition):"
+    ppush $ I32 0
+    docLang $ "Hash (for easier search):"
+    x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
+    ppush rax
+    docLang $ "Previous entry pointer (TODO: use r11):"
+    x86 $ mov rax $ case prevLabel of Just l  -> L64 l
+                                      Nothing -> I64 0
+    ppush rax
+    return x
+
+pushSEQDef :: Maybe String -> String -> Lang String
+pushSEQDef prevLabel bodyLabel = do
+    docLang $ "Dictionary entry for " ++ bodyLabel
+    -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
+    let x = "DICT_" ++ bodyLabel
+    x86 $ asm $ setLabel x
+    docLang $ "Label:"
+    mapM ppush $ map (I8 . ascii) bodyLabel
+    docLang $ "Label length:"
+    ppush $ I32 $ fromIntegral $ length bodyLabel
+    docLang $ "Term sequence memory address:"
+    x86 $ mov rax $ L64 bodyLabel
+    ppush rax
+    docLang $ "Type (1 means it's an SEQ-based definition):"
+    ppush $ I32 1
+    docLang $ "Hash (for easier search):"
+    x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
+    ppush rax
+    docLang $ "Previous entry pointer (TODO use r11):"
+    x86 $ mov rax $ case prevLabel of Just l  -> L64 l
+                                      Nothing -> I64 0
+    ppush rax
     return x
 
 defineHashTerm :: Lang ()
@@ -236,12 +289,12 @@ defineRdTermLinux = defFunBasic funName ty body
         x86 $ asm $ setLabel "READ_TERM_BREAK"
         ppopW8 al
         ppush $ r15   -- Num of chars read
-        ppush $ I64 1 -- Success
+        ppush $ I32 1 -- Success
         x86 $ ret
 
         x86 $ asm $ setLabel "READ_TERM_ERROR"
         ppush $ r15   -- Num of chars read
-        ppush $ I64 0 -- Error
+        ppush $ I32 0 -- Error
         x86 $ ret
 
 -- Takes 1 parameter and adds input from stdin
@@ -282,12 +335,12 @@ defineRdChrLinux = defFunBasic funName ty body
         ppopW8 al -- Take from stack the char we've read
 
         ppush rax     -- The char we've read
-        ppush $ I64 1 -- Success
+        ppush $ I32 1 -- Success
         returnFunc funName
 
         x86 $ asm $ setLabel "READ_CHARS_NOTHING_READ"
-        ppush $ I64 0 -- Placeholder
-        ppush $ I64 0 -- Fail
+        ppush $ I32 0 -- Placeholder
+        ppush $ I32 0 -- Fail
         returnFunc funName
 
 -- Type :w64       -> :
@@ -347,7 +400,7 @@ definePush1 = defFunBasic fn ty body where
     fn = "PUSH1"
     ty = TyFunc fn TyEmpty baseWord
     body = do
-        ppush (I64 1)
+        ppush $ I32 1
 
 -- Type:      : -> :w64
 -- Operation: : -> :literal
@@ -368,8 +421,9 @@ defineLit = defFunBasic fn ty body where
         x86 $ add rsp $ I32 8
 
 -- A sequence definition attempt which we want to evaluate.
-testDefinition :: Lang ()
-testDefinition = x86 $ do
+-- TODO: Push these to the stack as well.
+testSEQDefinitions :: Lang ()
+testSEQDefinitions = x86 $ do
     asm $ setLabel "TEST"
     asm $ emitLabelRef64 "DICT_PUSH3"
     asm $ bflush
@@ -487,10 +541,10 @@ defineCMP funName jmpCmpFun = defFunBasic funName ty funBody
         ppop rbx
         x86 $ cmp rax rbx -- test: rax (?) rbx
         x86 $ jmpCmpFun trueLabel -- if cmpFun holds, jump to trueLabel
-        ppush (I64 0)
+        ppush (I32 0)
         x86 $ ret
         x86 $ asm $ setLabel trueLabel
-        ppush (I64 1)
+        ppush (I32 1)
         x86 $ ret
     ty = TyFunc funName (TyProd baseWord TyWord) baseWord
     trueLabel = funName ++ "_true"
@@ -559,11 +613,13 @@ ppush v | supported v = do
     where sz (I64 _)    = 8
           sz (R64 _)    = 8
           sz (RR64 _ _) = 8
+          sz (L64 _)    = 8
+          sz (I32 _)    = 8
           sz (I8 _)     = 1
           sz (R8 _)     = 1
           supported (I8 _) = True
           supported (R8 _) = True
-          supported (I64 _) = True
+          supported (I32 _) = True
           supported (R64 _) = True
           supported _ = False
 ppush v = error $ "ppush doesn't support " ++ show v

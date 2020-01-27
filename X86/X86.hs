@@ -175,7 +175,8 @@ mov_ o1@(RR64 dst offset) o2@(R64 src)
         emit1 $ modRegRef8bitOffset .|. (index src `shiftL` 3) .|. index dst
         weirdRSPHack dst
         imm8  $ fromIntegral offset
-mov_ o1@(RR64 dst offset) o2@(I64 src)
+mov_ o1@(RR64 dst offset) o2@(I32 src)
+    -- WARNING! Performs sign-extension of I32 to 64 bits!
     | offset < min8BitValI || max8BitValI < offset = do 
         rex_w Nothing (Just dst)
         emit1 $ 0xC7
