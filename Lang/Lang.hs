@@ -208,7 +208,7 @@ pushSEQDef bodyLabel calls = do
     mapM pushDictAddress (reverse calls) 
     docLang "Save a pointer to the sequence of dict pointers "
     docLang "from the stack into rbx. "
-    x86 $ mov rbx (derefOffset rsi 0)
+    x86 $ mov rbx rsi -- (derefOffset rsi 0)
     docLang $ "SEQ dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     -- let x = "DICT_" ++ bodyLabel
@@ -217,6 +217,10 @@ pushSEQDef bodyLabel calls = do
     -- mapM ppush $ map (I8 . ascii) bodyLabel
     -- docLang $ "Label length:"
     -- ppush $ I32 $ fromIntegral $ length bodyLabel
+
+    -- TODO: Since this is always the previous address on the stack, we 
+    -- could just drop this parameter from SEQ definitions and have the
+    -- sequence words follow just immediately...
     docLang $ "Term sequence memory address (that we just pushed on the stack):"
     ppush rbx
     docLang $ "Type (1 means it's an SEQ-based definition):"
@@ -532,13 +536,12 @@ defineEval = do
     -- FIXME: Eval has a bug, it claims to use r9 to iterate through the
     -- dictionary entry r8, but it doesn't increment r9 once done, it 
     -- increments r8! I don't think r9 is needed!
-    docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
-    docLang "We use r9 to iterate the words in the sequence."
-    docLang "Initially r9 holds the memory location of the first word:"
-    -- docLang "It's a pointer to a 'struct' of definitions with metadata."
+    docLang "r8 holds the term (dict. pointer) under evaluation."
+    docLang "r9 is the dictionary entry pointed by r8, the current word:"
     x86 $ mov r9 (derefOffset r8 0)
-    x86 $ cmp r9 (I32 0x00)
-    x86 $ jeNear "EVAL_STOP" -- Empty word reached - the sequence ends
+
+    x86 $ cmp r9 (I32 0x00)  -- If r8 points to 0...
+    x86 $ jeNear "EVAL_STOP" -- Empty word reached - reached the sequence end.
 
     docLang "r9 + 0:  .prev (-ious) dictionary entry, if any"
     docLang "r9 + 8:  .hash of rntry name, fnv1 for easy search"
@@ -556,10 +559,10 @@ defineEval = do
     x86 $ cmp r10 (I32 0x00)
     x86 $ jeNear "EVAL_ASM"
     x86 $ cmp r10 (I32 0x01)
-    x86 $ jeNear "EVAL_WORDS"
+    x86 $ jeNear "EVAL_SEQ"
 
     docLang "def.type == 0: Evaluating assembly"
-    docLang "Move def.addr to r10"
+    docLang "Move def.addr to r10. Assume the ASM doesn't modify r8."
     x86 $ do
         asm $ setLabel "EVAL_ASM"
         mov  r10 (derefOffset r9 24)
@@ -568,11 +571,12 @@ defineEval = do
 
     docLang "def.type == 1: Evaluating a sequence of words"
     docLang "Recursively call EVAL on each sequence word."
-    docLang "The sequence to be called is at r9 + 24."
+    docLang "The sequence to be called is at r9 + 24 (.addr)."
     docLang "Prepare for eval recursion: save the current r8 on the "
-    docLang "call stack."
+    docLang "call stack and make r8 now point to the first term in "
+    docLang "the sequence. "
     x86 $ do 
-        asm $ setLabel "EVAL_WORDS"
+        asm $ setLabel "EVAL_SEQ"
         push r8
         mov  r8 (derefOffset r9 24)
         callLabel "EVAL" -- Recursion
@@ -581,9 +585,10 @@ defineEval = do
 
     x86 $ asm $ setLabel "EVAL_STEP_DONE"
 
-    -- TODO: Move on to the next word in the sequence we're evaluating.
+    -- Move on to the next word in the sequence we're evaluating.
+    docLang "Advance the word pointer to the next word and loop back to EVAL."
     x86 $ add r8 (I32 8)
-    x86 $ jmpLabel "EVAL" -- We've advanced to the next word, repeat the operation.
+    x86 $ jmpLabel "EVAL"
 
     x86 $ asm $ setLabel "EVAL_STOP"
     x86 $ ret 

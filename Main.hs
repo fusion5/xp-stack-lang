@@ -88,14 +88,16 @@ mainLang = do
     x86 $ callLabel "TERM_LOOK"
 
     -- assertPtop 1 "MAIN term definition not found"
-    pdrop 1
+    pdrop 1 -- TERM_LOOK success code
 
     docLang "We initialize r8 to be the current stack top, because "
     docLang "as mentioned before, the stack now holds a sequence that "
     docLang "is to be passed to the EVAL function (and EVAL takes r8 "
     docLang "as parameter)."
-    x86 $ mov r8 (derefOffset rsi 0)
+    x86 $ mov r8 rsi
     x86 $ callLabel "EVAL"
+
+    assertPtop 1 "Main didnt push 1"
 
     x86 $ callLabel "EXIT"
 
