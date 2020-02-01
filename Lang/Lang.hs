@@ -87,7 +87,6 @@ data Dict =
 pushInitialDictionary = do
     docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
     x86 $ mov r11 $ I64 0
-    {-
     pushASMDef "PDROP"
     pushASMDef "EQ"
     pushASMDef "LT"
@@ -99,13 +98,10 @@ pushInitialDictionary = do
     pushASMDef "AND"
     pushASMDef "LIT"
     pushASMDef "EXIT"
-    -}
     pushASMDef "PLUS"
     pushASMDef "PUSH1"
-    pushSEQDef "PUSH3" ["PUSH1", "PUSH1", "PUSH1"]
-    pushSEQDef "MAIN"  ["PUSH3", "PLUS", "PLUS"]
-    -- pushSEQDef "MAIN"  ["PUSH1", "PUSH1", "PLUS"]
-    -- pushSEQDef "MAIN" ["PUSH3"]
+    pushSEQDef "PUSH2" ["PUSH1", "PUSH1", "PLUS"]
+    pushSEQDef "MAIN"  ["PUSH2", "PUSH2", "TIMES", "EXIT"]
         
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
 appendSEQDefinition prevLabel bodyLabel = do

@@ -87,7 +87,7 @@ mainLang = do
     ppush $ I32 $ fromIntegral $ length searchFun
     x86 $ callLabel "TERM_LOOK"
 
-    -- assertPtop 1 "MAIN term definition not found"
+    assertPtop 1 "MAIN term definition not found"
     pdrop 1 -- TERM_LOOK success code
 
     docLang "We initialize r8 to be the current stack top, because "
@@ -96,8 +96,6 @@ mainLang = do
     docLang "as parameter)."
     x86 $ mov r8 rsi
     x86 $ callLabel "EVAL"
-
-    -- assertPtop 3 "Main didnt push 3"
 
     x86 $ callLabel "EXIT"
 
