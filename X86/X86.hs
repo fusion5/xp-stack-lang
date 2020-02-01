@@ -127,7 +127,7 @@ mov_ (R64 dst) (S64 str) = do
     emit1 $ 0xB8 .|. index dst
     asm $ emitStringRef str
 mov_ o1@(R64 dst) o2@(R64 src) = do -- REX.W + 89 /r | MOV r/m64, r64
-    rex_w (Just dst) (Just src)
+    rex_w (Just src) (Just dst)
     emit1 $ 0x89
     emit1 $ mrmByte o2 o1
 mov_ o1@(R64 dst) o2@(RR64 src offset)

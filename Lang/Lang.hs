@@ -15,6 +15,7 @@ import ASM.Datatypes
 import Lang.Datatypes
 import Lang.Types
 import Lang.Linux
+import Lang.Debug
 
 import Data.Int
 import Data.Word
@@ -58,9 +59,10 @@ defineBaseFuns = do
     defineRdChrLinux
     defineWrChrLinux
 
-    defineRdTermLinux
+    defineTermReadLinux
 
-    defineHashTerm
+    defineTermHash
+    defineTermLook
 
     defineLit 
     definePush1 -- Dummy test function that just pushes constant 1
@@ -69,8 +71,7 @@ defineBaseFuns = do
 
     defineEval
 
-    pushInitialDictionary
-    testSEQDefinitions
+    -- testSEQDefinitions
 
 data Dict = 
     Entry (Maybe Word64) -- Pointer to the rest of the dictionary, if any.
@@ -86,21 +87,24 @@ data Dict =
 pushInitialDictionary = do
     docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
     x86 $ mov r11 $ I64 0
-    k <- pushASMDef Nothing  "PDROP"
-    k <- pushASMDef (Just k) "EQ"
-    k <- pushASMDef (Just k) "LT"
-    k <- pushASMDef (Just k) "LTE"
-    k <- pushASMDef (Just k) "GT"
-    k <- pushASMDef (Just k) "GTE"
-    k <- pushASMDef (Just k) "PLUS"
-    k <- pushASMDef (Just k) "MINUS"
-    k <- pushASMDef (Just k) "TIMES"
-    k <- pushASMDef (Just k) "AND"
-    k <- pushASMDef (Just k) "LIT"
-    k <- pushASMDef (Just k) "EXIT"
-    k <- pushASMDef (Just k) "PUSH1"
-    k <- pushSEQDef (Just k) "PUSH3"
-    return ()
+    {-
+    pushASMDef "PDROP"
+    pushASMDef "EQ"
+    pushASMDef "LT"
+    pushASMDef "LTE"
+    pushASMDef "GT"
+    pushASMDef "GTE"
+    pushASMDef "PLUS"
+    pushASMDef "MINUS"
+    pushASMDef "TIMES"
+    pushASMDef "AND"
+    pushASMDef "LIT"
+    pushASMDef "EXIT"
+    -}
+    pushASMDef "PUSH1"
+    -- pushSEQDef "PUSH3" ["PUSH1", "PUSH1", "PUSH1"]
+    -- pushSEQDef "MAIN"  ["PUSH3", "PLUS", "PLUS"]
+    pushSEQDef "MAIN" ["PUSH1"]
         
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
 appendSEQDefinition prevLabel bodyLabel = do
@@ -130,9 +134,7 @@ appendSEQDefinition prevLabel bodyLabel = do
 appendASMDefinition :: Maybe String -> String -> X86_64 String
 appendASMDefinition prevLabel bodyLabel = do
     docX86 $ "Dictionary entry for " ++ bodyLabel
-    -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
-    let x = "DICT_" ++ bodyLabel
-    asm $ setLabel x
+    x <- asm $ freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     docX86 $ "Previous entry ptr:"
     case prevLabel of
         Just l  -> asm $ emitLabelRef64 l
@@ -158,63 +160,122 @@ appendASMDefinition prevLabel bodyLabel = do
     asm $ bflush
     return x
 
--- push a term in the dictionary and on the parameters stack as well..
+-- Push a term in the dictionary and on the parameters stack as well..
 -- We don't actually know the previous label so we should be using r11!
-pushASMDef :: Maybe String -> String -> Lang String
-pushASMDef prevLabel bodyLabel = do
-    docLang $ "Dictionary entry for " ++ bodyLabel
+pushASMDef :: String -> Lang ()
+pushASMDef bodyLabel = do
+    docLang $ "ASM Dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
-    let x = "DICT_" ++ bodyLabel
-    x86 $ asm $ setLabel x
-    docLang "Label:"
-    mapM ppush $ map (I8 . ascii) bodyLabel
-    docLang "Label length:"
-    ppush $ I32 $ fromIntegral $ length bodyLabel
+    -- x86 $ asm $ setLabel x
+    -- docLang "Label:"
+    -- mapM ppush $ map (I8 . ascii) bodyLabel
+    -- docLang "Label length:"
+    -- ppush $ I32 $ fromIntegral $ length bodyLabel
     docLang "ASM or term sequence address in memory:"
     x86 $ mov rax $ L64 bodyLabel
     ppush rax
     docLang "Type (0 means it's an ASM-based definition):"
     ppush $ I32 0
-    docLang "Hash (for easier search):"
+    docLang "Hash (for easy search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
     ppush rax
-    docLang "Previous entry pointer (TODO: use r11):"
+    docLang "Previous entry pointer:"
     ppush r11
     docLang "Set the dictionary pointer as the top of the stack, since"
-    docLang "the stack now holds a dictionary definition which we won't"
-    docLang "deallocate!"
-    mov r11 rsi
-    return x
+    docLang "the stack now holds a dictionary definition which will"
+    docLang "remain on the stack!"
+    docLang "It should be an invariant that the parameter stack top,"
+    docLang "rsi is always >= r11."
+    x86 $ mov r11 rsi
 
-pushSEQDef :: Maybe String -> String -> Lang String
-pushSEQDef prevLabel bodyLabel = do
-    docLang $ "Dictionary entry for " ++ bodyLabel
+pushDictAddress :: String -> Lang ()
+pushDictAddress term = do
+    mapM ppush $ map (I8 . ascii) term
+    ppush $ I32 $ fromIntegral $ length term
+    x86 $ callLabel "TERM_LOOK"
+    -- Commented for debug purposes (more compact code)
+    -- assertPtop 1 "Undefined dictionary reference"
+    pdrop 1
+
+pushSEQDef :: String -> [String] -> Lang ()
+pushSEQDef bodyLabel calls = do
+    -- TODO: Resolve the dictionary pointers of the parameters
+    -- in 'calls' and emit them on the stack as well. 
+    -- Then have the def.addr point to -- this stack sequence.
+    docLang $ "SEQ body definition for " ++ bodyLabel
+    docLang "Resolve "
+    -- Reverse bc. the stack grows opposite to addresses
+    mapM pushDictAddress (reverse calls) 
+    docLang "Save a pointer to the sequence of dict pointers "
+    docLang "from the stack into rbx. "
+    x86 $ mov rbx (derefOffset rsi 0)
+    docLang $ "SEQ dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
-    let x = "DICT_" ++ bodyLabel
-    x86 $ asm $ setLabel x
-    docLang $ "Label:"
-    mapM ppush $ map (I8 . ascii) bodyLabel
-    docLang $ "Label length:"
-    ppush $ I32 $ fromIntegral $ length bodyLabel
-    docLang $ "Term sequence memory address:"
-    x86 $ mov rax $ L64 bodyLabel
-    ppush rax
+    -- let x = "DICT_" ++ bodyLabel
+    -- x86 $ asm $ setLabel x
+    -- docLang $ "Label:"
+    -- mapM ppush $ map (I8 . ascii) bodyLabel
+    -- docLang $ "Label length:"
+    -- ppush $ I32 $ fromIntegral $ length bodyLabel
+    docLang $ "Term sequence memory address (that we just pushed on the stack):"
+    ppush rbx
     docLang $ "Type (1 means it's an SEQ-based definition):"
     ppush $ I32 1
     docLang $ "Hash (for easier search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
     ppush rax
-    docLang $ "Previous entry pointer (TODO use r11):"
-    x86 $ mov rax $ case prevLabel of Just l  -> L64 l
-                                      Nothing -> I64 0
-    ppush rax
-    return x
+    docLang $ "Previous entry pointer:"
+    ppush r11
+    docLang $ "Advance the dictionary:"
+    x86 $ mov r11 rsi
 
-defineHashTerm :: Lang ()
-defineHashTerm = defFunBasic funName ty body
+defineTermLook :: Lang ()
+defineTermLook = defFunBasic funName ty body
   where
-    -- Improve: Is HASH_TERM expressible as a sequence of more basic words?
-    funName = "HASH_TERM"
+    funName = "TERM_LOOK"
+    ty      = undefined
+    body    = do
+        docLang "Lookup a term in the dictionary."
+        docLang "Compute the term hash."
+        x86 $ callLabel "TERM_HASH"
+        docLang "Traverse the dictionary using rax until we find"
+        docLang "either the emtpy dictionary or the term."
+        docLang ""
+        docLang "rax now holds the hash we're looking for."
+        ppop rax 
+        x86 $ mov rbx r11 -- Begin from the dictionary top.
+        x86 $ asm $ setLabel "TERM_LOOK_WHILE"
+        do
+            x86 $ cmp rbx $ I32 0
+            x86 $ jeNear "TERM_LOOK_NOT_FOUND"
+
+            docLang "Take the current dictionary entry hash: def.hash"
+            x86 $ mov rcx (derefOffset rbx 8)
+            x86 $ cmp rcx rax
+            x86 $ jeNear "TERM_LOOK_FOUND"
+            
+            docLang "Advance the dictionary to the following item (def.prev)"
+            x86 $ mov rbx (derefOffset rbx 0) 
+
+            x86 $ jmpLabel "TERM_LOOK_WHILE"
+        x86 $ asm $ setLabel "TERM_LOOK_FOUND"
+        docLang "Found! Return the matching dictionary address"
+        ppush rbx 
+        ppush $ I32 1
+        x86 $ ret
+
+        x86 $ asm $ setLabel "TERM_LOOK_NOT_FOUND"
+        docLang "Not found! indicate that there is an error."
+        ppush $ I32 0
+        ppush $ I32 0
+        x86 $ ret
+        
+
+defineTermHash :: Lang ()
+defineTermHash = defFunBasic funName ty body
+  where
+    -- Improve: Is TESH_HARM expressible as a sequence of more basic words?
+    funName = "TERM_HASH"
     ty      = undefined -- Unexpressible atm.
     body    = do
         docLang "Given a word on the stack, compute its hash. This helps to"
@@ -226,27 +287,27 @@ defineHashTerm = defFunBasic funName ty body
         docLang "RAX holds the hash."
         x86 $ mov rax $ I64 fnvOffsetBasis
 
-        x86 $ asm $ setLabel "HASH_TERM_WHILE"
+        x86 $ asm $ setLabel "TERM_HASH_WHILE"
         do 
             x86 $ cmp rbx $ I32 0
-            x86 $ jeNear "HASH_TERM_BREAK"
+            x86 $ jeNear "TERM_HASH_BREAK"
             x86 $ mov rcx (I64 fnvPrime)
             x86 $ mul rcx
             x86 $ xor rcx rcx -- Zeroing rcx is necessary
             ppopW8 cl
             x86 $ xor rax rcx
             x86 $ dec rbx
-            x86 $ jmpLabel "HASH_TERM_WHILE"
-        x86 $ asm $ setLabel "HASH_TERM_BREAK"
+            x86 $ jmpLabel "TERM_HASH_WHILE"
+        x86 $ asm $ setLabel "TERM_HASH_BREAK"
 
         ppush rax
         x86 $ ret
 
 
-defineRdTermLinux :: Lang ()
-defineRdTermLinux = defFunBasic funName ty body
+defineTermReadLinux :: Lang ()
+defineTermReadLinux = defFunBasic funName ty body
   where
-    funName = "READ_TERM"
+    funName = "TERM_READ"
     ty      = undefined -- Unexpressible atm.
     body    = do
         docLang "Reads characters until a space or a new line char is read."
@@ -424,31 +485,41 @@ defineLit = defFunBasic fn ty body where
         docLang "should be returned to and executed!)"
         x86 $ add rsp $ I32 8
 
--- A sequence definition attempt which we want to evaluate.
+{- Commented because these are pushed to the stack as well in ASM def
+-- A sequence definition attempt that we want to evaluate.
 -- TODO: Push these to the stack as well.
 testSEQDefinitions :: Lang ()
-testSEQDefinitions = x86 $ do
-    asm $ setLabel "TEST"
-    asm $ emitLabelRef64 "DICT_PUSH3"
-    asm $ bflush
-    asm $ emitLabelRef64 "DICT_PLUS"
-    asm $ bflush
-    asm $ emitLabelRef64 "DICT_PLUS"
-    asm $ bflush
-    asm $ emitLabelRef64 "DICT_EXIT"
-    asm $ bflush
-    imm64 0 -- Marks the sequence end
-    asm $ bflush
+testSEQDefinitions = do
+    x86 $ asm $ setLabel "TEST_SEQUENCE1"
+    -- Emit a dictionary reference to PUSH3... this should
+    -- be obtained through a dictionary search, since we don't
+    -- have the exact dictionary addresses of the words.
+    x86 $ mov rax $ I64 $ fnv1 $ map ascii "PUSH3"
+    ppush rax
 
-    asm $ setLabel "PUSH3"
-    asm $ emitLabelRef64 "DICT_PUSH1"
-    asm $ bflush
-    asm $ emitLabelRef64 "DICT_PUSH1"
-    asm $ bflush
-    asm $ emitLabelRef64 "DICT_PUSH1"
-    asm $ bflush
-    imm64 0 -- Marks the sequence end
-    asm $ bflush
+    x86 $ do 
+        asm $ emitLabelRef64 "DICT_PUSH3"
+        asm $ bflush
+        asm $ emitLabelRef64 "DICT_PLUS"
+        asm $ bflush
+        asm $ emitLabelRef64 "DICT_PLUS"
+        asm $ bflush
+        asm $ emitLabelRef64 "DICT_EXIT"
+        asm $ bflush
+        imm64 0 -- Marks the sequence end
+        asm $ bflush
+
+    x86 $ do
+        asm $ setLabel "PUSH3"
+        asm $ emitLabelRef64 "DICT_PUSH1"
+        asm $ bflush
+        asm $ emitLabelRef64 "DICT_PUSH1"
+        asm $ bflush
+        asm $ emitLabelRef64 "DICT_PUSH1"
+        asm $ bflush
+        imm64 0 -- Marks the sequence end
+        asm $ bflush
+-}
 
 defineEval :: Lang ()
 defineEval = do
@@ -458,6 +529,9 @@ defineEval = do
     -- RAX is a pointer to the sequence to be evaluated.
     -- The first entry in the sequence is a dictionary entry.
     -- If the value at address RAX is 0, then we have an ASM-based entry. 
+    -- FIXME: Eval has a bug, it claims to use r9 to iterate through the
+    -- dictionary entry r8, but it doesn't increment r9 once done, it 
+    -- increments r8! I don't think r9 is needed!
     docLang "r8 holds the sequence of words (dict. pointers) to evaluate."
     docLang "We use r9 to iterate the words in the sequence."
     docLang "Initially r9 holds the memory location of the first word:"
@@ -466,39 +540,41 @@ defineEval = do
     x86 $ cmp r9 (I32 0x00)
     x86 $ jeNear "EVAL_STOP" -- Empty word reached - the sequence ends
 
-    docLang "r9 + 0:  Previous dictionary entry (if any)"
-    docLang "r9 + 8:  Type of dictionary entry (asm, words or typedef)"
-    docLang "r9 + 16: Word definition body pointer"
-    docLang "r9 + 24: Length of dictionary name (l)"
-    docLang "r9 + 32: Name of dictionarly entry of length l" 
+    docLang "r9 + 0:  .prev (-ious) dictionary entry, if any"
+    docLang "r9 + 8:  .hash of rntry name, fnv1 for easy search"
+    docLang "r9 + 16: .type of dictionary entry (0=asm, 1=words or typedef?)"
+    docLang "r9 + 24: .addr of ASM or term sequence in memory"
+    -- docLang "r9 + 32: Length of dictionary name (l)"
+    -- docLang "r9 + 40: Name of dictionarly entry of length l" 
 
-    docLang "Move the entry type (located at offset r9 + 8) to r10"
-    x86 $ mov r10 (derefOffset r9 8)
+    docLang "Move def.type to r10"
+    x86 $ mov r10 (derefOffset r9 16)
 
-    docLang "Pattern match on the type of dictionary entry:"
+    docLang "Pattern match def.type:"
+    -- TODO: Could we not use the r10 register alltogether?
+    -- can we do: cmp (derefOffset r9 16) (I32 0x00)
     x86 $ cmp r10 (I32 0x00)
     x86 $ jeNear "EVAL_ASM"
     x86 $ cmp r10 (I32 0x01)
     x86 $ jeNear "EVAL_WORDS"
 
-    docLang "Type = 0: Evaluating assembly"
-    docLang "Move the method body pointer to r10"
-    docLang "The method body pointer is at r9+16"
+    docLang "def.type == 0: Evaluating assembly"
+    docLang "Move def.addr to r10"
     x86 $ do
         asm $ setLabel "EVAL_ASM"
-        mov r10 (derefOffset r9 16)
+        mov  r10 (derefOffset r9 24)
         call r10 
         jmpLabel "EVAL_STEP_DONE"
 
-    docLang "Type = 1: Evaluating a sequence of words"
-    docLang "Recursively call EVAL on a sequence."
-    docLang "The sequence to be called is at r9 + 16."
+    docLang "def.type == 1: Evaluating a sequence of words"
+    docLang "Recursively call EVAL on each sequence word."
+    docLang "The sequence to be called is at r9 + 24."
     docLang "Prepare for eval recursion: save the current r8 on the "
     docLang "call stack."
     x86 $ do 
         asm $ setLabel "EVAL_WORDS"
         push r8
-        mov r8 (derefOffset r9 16)
+        mov  r8 (derefOffset r9 24)
         callLabel "EVAL" -- Recursion
         pop r8
         jmpLabel "EVAL_STEP_DONE"
