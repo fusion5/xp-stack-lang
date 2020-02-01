@@ -94,17 +94,18 @@ pushInitialDictionary = do
     pushASMDef "LTE"
     pushASMDef "GT"
     pushASMDef "GTE"
-    pushASMDef "PLUS"
     pushASMDef "MINUS"
     pushASMDef "TIMES"
     pushASMDef "AND"
     pushASMDef "LIT"
     pushASMDef "EXIT"
     -}
+    pushASMDef "PLUS"
     pushASMDef "PUSH1"
-    -- pushSEQDef "PUSH3" ["PUSH1", "PUSH1", "PUSH1"]
-    -- pushSEQDef "MAIN"  ["PUSH3", "PLUS", "PLUS"]
-    pushSEQDef "MAIN" ["PUSH1"]
+    pushSEQDef "PUSH3" ["PUSH1", "PUSH1", "PUSH1"]
+    pushSEQDef "MAIN"  ["PUSH3", "PLUS", "PLUS"]
+    -- pushSEQDef "MAIN"  ["PUSH1", "PUSH1", "PLUS"]
+    -- pushSEQDef "MAIN" ["PUSH3"]
         
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
 appendSEQDefinition prevLabel bodyLabel = do
@@ -203,12 +204,12 @@ pushSEQDef bodyLabel calls = do
     -- in 'calls' and emit them on the stack as well. 
     -- Then have the def.addr point to -- this stack sequence.
     docLang $ "SEQ body definition for " ++ bodyLabel
-    docLang "Resolve "
+    docLang "With stacks we have to do everything backwards."
+    docLang "Push a 0 to indicate the termination of the sequence! (Essential)"
+    docLang "Then push the calls in reverse order."
+    ppush $ I32 0
     -- Reverse bc. the stack grows opposite to addresses
-    mapM pushDictAddress (reverse calls) 
-    docLang "Save a pointer to the sequence of dict pointers "
-    docLang "from the stack into rbx. "
-    x86 $ mov rbx rsi -- (derefOffset rsi 0)
+    mapM pushDictAddress $ reverse calls
     docLang $ "SEQ dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     -- let x = "DICT_" ++ bodyLabel
@@ -220,8 +221,11 @@ pushSEQDef bodyLabel calls = do
 
     -- TODO: Since this is always the previous address on the stack, we 
     -- could just drop this parameter from SEQ definitions and have the
-    -- sequence words follow just immediately...
-    docLang $ "Term sequence memory address (that we just pushed on the stack):"
+    -- sequence words follow immediately...
+    docLang "Cache rsi into rbx to avoid ppush function from interfering"
+    x86 $ mov rbx rsi
+    docLang $ "Term sequence memory address (it's the stack top because we "
+    docLang $ "just pushed it on the stack):"
     ppush rbx
     docLang $ "Type (1 means it's an SEQ-based definition):"
     ppush $ I32 1
@@ -536,8 +540,9 @@ defineEval = do
     -- FIXME: Eval has a bug, it claims to use r9 to iterate through the
     -- dictionary entry r8, but it doesn't increment r9 once done, it 
     -- increments r8! I don't think r9 is needed!
-    docLang "r8 holds the term (dict. pointer) under evaluation."
-    docLang "r9 is the dictionary entry pointed by r8, the current word:"
+    docLang "r8 holds the term (dict. pointer) under evaluation. It's a"
+    docLang "pointer to an array of terms that ends in 0."
+    docLang "r9 is the dictionary entry pointed by r8:"
     x86 $ mov r9 (derefOffset r8 0)
 
     x86 $ cmp r9 (I32 0x00)  -- If r8 points to 0...
