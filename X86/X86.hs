@@ -212,6 +212,7 @@ mov_ o1@(RR64 dst offset) o2@(R8 src)
         emit1 $ modRegRef8bitOffset  .|.
             (index8 src `shiftL` 3)  .|.
             index dst
+        weirdRSPHack dst
         imm8 $ fromIntegral offset
         -- undefined
 mov_ o1@(R8 dst) (RR64 src offset) 
@@ -288,7 +289,7 @@ binop ty oe o1@(R64 dst) o2@(I32 val) = do
     asm $ bflush
 binop ty _ o1@(R64 dst) o2@(RR64 src offset) 
     | min8BitValI <= offset && offset <= max8BitValI = do
-    rex_w (Just src) (Just dst)
+    rex_w (Just dst) (Just src)
     emit1 $ ty o1 o2
     emit1 $ modRegRef8bitOffset .|. index dst `shiftL` 3 .|. index src
     imm8  $ fromIntegral offset

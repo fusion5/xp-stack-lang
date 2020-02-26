@@ -1,7 +1,9 @@
 module Lang.Types where
 
+import Data.Word
+
 data BaseType = 
-    TyWord     -- 64 bits of data
+    TyWord     -- 64 bits of data, no signed or unsigned property
   | TySigned   -- 64 bit signed integer
   | TyUnsigned -- 64 bit unsigned integer, same as TyWord actually.
     deriving (Eq)
@@ -23,3 +25,11 @@ data Type =
   | TyId String  -- Identify a type from a TySum by a name
 
 baseWord = TyProd TyEmpty TyWord
+
+btyBytes :: BaseType -> Word32
+btyBytes _ = 8
+
+sizeof :: Type -> Word32
+sizeof (TyProd t bt) = btyBytes bt + sizeof t
+sizeof (TySum t1 t2) = max (sizeof t1) (sizeof t2)
+sizeof (TyEmpty)     = 0

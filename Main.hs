@@ -53,9 +53,6 @@ initParamStack = do
 
 mainLang = do
     docLang "Read from stdin the dict. entry that we should interpret."
-    -- x86 $ callLabel "READ_TERM"
-    -- assertPtop 1 "READ_TERM should be successful"
-    -- pdrop 1
 
     -- Test for input string 'abc'
     {-
@@ -78,7 +75,7 @@ mainLang = do
     docLang "The 0 is needed because after it will follow the "
     docLang "address of the MAIN dictionary symbol. The purpose is "
     docLang "to build an entry point, and EVAL takes as input a sequence of "
-    docLang "dictionary entry pointers ending in 0. This is the ending 0."
+    docLang "dictionary entry pointers ending in 0. This is the final 0."
     ppush $ I32 0
 
     docLang "Dictionary search function:"
