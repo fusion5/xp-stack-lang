@@ -449,6 +449,13 @@ mul r@(R64 factor) = do
     emit1 $ modReg .|. opcodeExt 4 .|. index factor
     asm $ bflush
 
+div_ :: Val -> X86_64 ()
+div_ r@(R64 factor) = do
+    rex_w Nothing (Just factor)
+    emit1 0xF7
+    emit1 $ modReg .|. opcodeExt 6 .|. index factor
+    asm $ bflush
+
 -- Shift left once, or shift left a number of times
 -- Shift Arithmetic Left
 sal :: Val -> Val -> X86_64 ()

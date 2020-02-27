@@ -20,6 +20,7 @@ import Lang.Debug
 import Data.Int
 import Data.Word
 import qualified Data.Bits as B
+import Control.Monad
 
 -- String hash parameters
 fnvOffsetBasis = 0xCBF29CE484222325
@@ -68,6 +69,7 @@ defineBaseFuns = do
     defineLIT
     defineIFPOP0
     defineIFPEEK0
+    defineDbgDumpPtop64
 
     definePush1 -- Dummy test function that just pushes constant 1
 
@@ -111,12 +113,16 @@ pushInitialDictionary = do
                          -- stack value equals 0.
     pushASMDef "WRITE_CHAR"
     pushASMDef "READ_CHAR"
+    pushASMDef "DBG_DUMP_PTOP_64"
     pushASMDef "NOT"
     pushSEQDef "PUSH3"   [] [lit 3]
     pushSEQDef "PUSH2"   [] [run "PUSH1", run "PUSH1", run "PLUS"]
     pushSEQDef "BETWEEN" 
         [("num", baseWord), ("low", baseWord), ("hi", baseWord)] 
         [
+            -- TODO: Think of a way of referring to those parameters
+            -- from the call stack, possibly using a textual reference...
+            -- (2020-02-26 19:35)
             lit 5
         ]
     pushSEQDef "SHOW_BYTE_0_9" [] [
@@ -155,6 +161,7 @@ pushInitialDictionary = do
             -- run "IFPEEK0", run "PUSH2", run "EXIT"
             lit 0,
             run "BETWEEN",
+            run "DBG_DUMP_PTOP_64",
             run "EXIT"
         ]
 
@@ -602,6 +609,53 @@ defineExit = defFunBasic "EXIT" ty body
             ppop rbx
             x86 $ mov rax $ I64 1
             x86 $ int
+
+-- Type :w64 -> :w64
+-- Func :val -> :val
+-- Does nothing; as a side effect, it prints the top of the stack on stdout.
+defineDbgDumpPtop64 :: Lang ()
+defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
+  where
+    ty = TyFunc "DBG_DUMP_PTOP_64" baseWord baseWord
+    body = do
+        docLang "rax holds the top of the stack."
+        ppeek rax
+        docLang "A 64 bit value needs 16 chars to be printed. RCX is the counter."
+        x86 $ mov rcx $ I64 16 
+
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_START"
+        x86 $ mov rbx $ I64 0x10
+        x86 $ xor rdx rdx
+        x86 $ cmp rcx $ I32 0
+        x86 $ je "DBG_DUMP_PTOP_64_END"
+        x86 $ div_ rbx
+        docLang "Print rdx, which holds the remainder."
+
+        x86 $ cmp rdx $ I32 10
+        x86 $ jl "DBG_DUMP_PTOP_64_LT10"
+        docLang "Value between [10 and 15]"
+
+        x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_LT10"
+        docLang "Value between [0 and 9]"
+        docLang "Add 0x30 to rdx"
+        x86 $ add rdx $ I32 0x30
+        ppush rdx
+        x86 $ dec rcx
+        x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
+
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_END"
+        docLang "16 times write char. Conveniently, this also reverses the "
+        docLang "order of the chars (which we need to do)."
+        replicateM 16 $ do
+            x86 $ callLabel "WRITE_CHAR"
+            pdrop 1
+
+        docLang "Write a newline char"
+        ppush $ I32 0x0A
+        x86 $ callLabel "WRITE_CHAR"
+        pdrop 1
+
 
 -- http://man7.org/linux/man-pages/man2/write.2.html
 -- Type :w64 -> :int
