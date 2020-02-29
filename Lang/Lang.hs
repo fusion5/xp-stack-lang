@@ -35,6 +35,9 @@ fnvFold True  x h = fnvPrime * (h  `B.xor` fromIntegral x)
 fnv1 :: [Word8] -> Word64
 fnv1 = foldr (fnvFold False) fnvOffsetBasis
 
+fnv1s :: String -> Word64
+fnv1s = fnv1 . map ascii
+
 instance Documentation (Lang ()) where
     doc = x86 . doc
 
@@ -74,8 +77,10 @@ defineBaseFuns = do
     defineIFPOP0
     defineIFPEEK0
     defineDbgDumpPtop64
+    defineREPL
 
     definePush1 -- Dummy test function that just pushes constant 1
+    definePushK -- Dummy test function that just pushes constant 'K'
 
     defineExit
 
@@ -103,6 +108,14 @@ pushSimpleDef bodyLabel = do
     ppush r11
     x86 $ mov r11 rsi
 
+writeMsgHelper msg = do
+            mov rax $ I64 $ fromIntegral $ linux_sys_write
+            mov rbx $ I64 $ fromIntegral $ linux_stderr
+            mov rdx (I64 $ fromIntegral $ length msg) 
+            asm $ addString msg
+            mov rcx (S64 msg)
+            int
+
 pushInitialSimpleDictionary = do
     docLang "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     x86 $ mov r11 $ I64 0
@@ -116,13 +129,21 @@ pushInitialSimpleDictionary = do
     pushSimpleDef "MINUS"
     pushSimpleDef "TIMES"
     pushSimpleDef "AND"
-    pushSimpleDef "LIT"
+    -- pushSimpleDef "LIT"
     pushSimpleDef "EXIT"
-    pushSimpleDef "DUP"
+    -- pushSimpleDef "DUP"
     pushSimpleDef "PLUS"
     pushSimpleDef "PUSH1"
+    pushSimpleDef "PUSHK"
     pushSimpleDef "WRITE_CHAR"
     pushSimpleDef "READ_CHAR"
+    pushSimpleDef "DBG_DUMP_PTOP_64"
+    pushSimpleDef "TERM_LOOK"
+    pushSimpleDef "TERM_READ"
+    pushSimpleDef "TERM_HASH"
+    pushSimpleDef "REPL"
+    docLang "Dictionary end marking point (LOOKUP ends here)"
+    ppush $ I32 0
 
 -- Bootstrap a kind of Forth interpreter dictionary.
 -- The dictionary is a linked list of definitions. A definition consists
@@ -337,7 +358,6 @@ accum = a 0
   a _ []     = []
   a s (x:xs) = s+x : a (s+x) xs
 
-
 -- In the end this function will have to be implemented in the language
 -- itself...
 pushSEQDef :: String 
@@ -412,7 +432,7 @@ defineNOT = defFunBasic funName ty body
         x86 $ asm $ setLabel "NOT_PUSH_0"
         ppush $ I32 0
         x86 $ ret
-        
+
 
 defineTermLook :: Lang ()
 defineTermLook = defFunBasic funName ty body
@@ -508,17 +528,122 @@ defineLIT = defFunBasic funName ty body
         x86 $ ret
 
 
--- (:w8 p1:...:w8 pn:w64 n -- :)
+defineREPL :: Lang ()
+defineREPL = defFunBasic "REPL" undefined body
+  where
+    body = do
+        docLang "REPL"
+        x86 $ asm $ setLabel "REPL_START"
+
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "TERM_READ returned an error!"
+        pdrop 1
+        -- Hash the term we've read.
+        x86 $ callLabel "TERM_HASH"
+        -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+
+        -- The first word is the operation we wish to make.
+        -- There are two operations for now, define and call.
+
+        ppop rax
+        x86 $ mov rbx (I64 $ fnv1s "def")
+        x86 $ cmp rax rbx
+        x86 $ jeNear "REPL_DEF"
+        x86 $ mov rbx (I64 $ fnv1s "run")
+        x86 $ cmp rax rbx
+        x86 $ jeNear "REPL_RUN"
+        x86 $ mov rbx (I64 $ fnv1s "q")
+        x86 $ cmp rax rbx
+        x86 $ jeNear "REPL_QUIT"
+        x86 $ jmpLabel "REPL_START"
+
+        x86 $ asm $ setLabel "REPL_DEF"
+
+        -- The first word in a define must be the term we 
+        -- wish to define.
+
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Could not read definition term name."
+        pdrop 1
+        x86 $ callLabel "TERM_HASH"
+
+        -- We have the term hash, now we expect the equal sign:
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Could not read equal sign in the definition."
+        pdrop 1
+        x86 $ callLabel "TERM_HASH"
+        x86 $ mov rbx (I64 $ fnv1s "=")
+        ppop rax
+        x86 $ cmp rax rbx
+        x86 $ je "REPL_READ_DEF_TERMS"
+        x86 $ writeMsgHelper "Error: in a definition, after the term, an equal sign is expected.\n"
+        x86 $ jmpLabel "REPL_START"
+
+        -- READ DEF. TERMS
+        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS"
+        ppop rax -- The hash of the definition name
+
+        docLang "Build our [ prev ][ name ][ addr ] record on the stack"
+        docLang "for the new dictionary entry..."
+        docLang "Unfortunately this assumes that the operation will"
+        docLang "succeed. TODO: figure out a way to do this only at the"
+        docLang "end if the whole definition was successfully read."
+        ppush r9  -- addr
+        ppush rax -- name hash 
+        ppush r11 -- prev
+        x86 $ mov r11 rsi
+
+        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS_LOOP"
+
+        -- START READ DEF. LOOP
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Could not read definition term"
+        pdrop 1
+
+        x86 $ callLabel "TERM_LOOK"
+        ppop rax
+        -- If we have read an unknown term, end the loop.
+        x86 $ cmp rax (I32 0)
+        x86 $ je "REPL_READ_DEF_TERMS_LOOP_END"
+
+        x86 $ callLabel "EMIT_CALL"
+
+        x86 $ jmpLabel "REPL_READ_DEF_TERMS_LOOP"
+        -- END READ DEF. LOOP
+ 
+        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS_LOOP_END"
+        -- Write definition ended!
+        x86 $ writeMsgHelper "Definition added.\n"
+
+        x86 $ callLabel "EMIT_RET"
+
+        x86 $ jmpLabel "REPL_START"
+
+        x86 $ asm $ setLabel "REPL_RUN"
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Could not read definition term"
+        pdrop 1
+        x86 $ callLabel "TERM_LOOK"
+        assertPtop 1 "Trying to run an unknown term"
+        pdrop 1
+        
+        -- Now take the '.addr' field from the dictionary term found by LOOK:
+        ppop rax
+        x86 $ mov rax (derefOffset rax 16)
+        x86 $ call rax
+
+        x86 $ jmpLabel "REPL_START"
+
+        x86 $ asm $ setLabel "REPL_QUIT"
+        
+        
+-- (w64 dict_address:w64 n -- :)
 defineEMITCALL :: Lang () 
 defineEMITCALL = defFunBasic "EMIT_CALL" undefined body
   where
     body = do
-        docLang "Emit a call to a certain function, the name of which"
+        docLang "Emit a call to a certain dictionary entry, the address of which"
         docLang "is on the stack."
-        x86 $ callLabel "TERM_LOOK"
-        assertPtop 1 "Trying to call an undefined term!"
-        pdrop 1
-        docLang "Take the .addr value of the dictionary entry at rax"
 
         ppop rax
         x86 $ mov rax (derefOffset rax 16)
@@ -664,7 +789,6 @@ defineTermHash = defFunBasic funName ty body
 
         ppush rax
         x86 $ ret
-
 
 defineTermReadLinux :: Lang ()
 defineTermReadLinux = defFunBasic funName ty body
@@ -880,6 +1004,13 @@ definePush1 = defFunBasic fn ty body where
     ty = TyFunc fn TyEmpty baseWord
     body = do
         ppush $ I32 1
+
+definePushK = defFunBasic fn ty body where
+    fn = "PUSHK"
+    ty = TyFunc fn TyEmpty baseWord
+    body = do
+        ppush $ I32 75
+
 
 -- Type:      : -> :w64
 -- Operation: : -> :literal

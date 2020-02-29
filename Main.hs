@@ -136,6 +136,7 @@ mainLang = do
 
     x86 $ initDynamicDefinitionsMemory
 
+    {- Warning: obsolete code
     -- The addition of the dictionary definition of FOOBAR (concrete, will 
     -- have to be abstracted)
     let term = "FOOBARS"
@@ -152,12 +153,21 @@ mainLang = do
     -- set it as the top dictionary entry:
     x86 $ mov r11 rsi
     -- Emit (push) FOOBAR's BODY at address r9 (and increase r9):
-    -- 1. Emit a push 30
-    ppush $ I32 48
+    -- 1. Emit a push literal
+    ppush $ I32 0x10
     x86 $ callLabel "EMIT_LIT_64"
 
-    -- 2. Emit a call to write_char
-    let term2 = "WRITE_CHAR"
+    ppush $ I32 0x10
+    x86 $ callLabel "EMIT_LIT_64"
+
+    -- 2a. Emit a call to write_char
+    let term2 = "PLUS"
+    mapM ppush $ map (I8 . ascii) term2
+    ppush $ I32 $ fromIntegral $ length term2
+    x86 $ callLabel "EMIT_CALL"
+
+    -- 2b. Emit a call to stack top dump
+    let term2 = "DBG_DUMP_PTOP_64"
     mapM ppush $ map (I8 . ascii) term2
     ppush $ I32 $ fromIntegral $ length term2
     x86 $ callLabel "EMIT_CALL"
@@ -165,10 +175,12 @@ mainLang = do
     -- 3. Emit a return.
     x86 $ callLabel "EMIT_RET"
     -- This concludes our definition of FOOBAR.
+    -}
 
     -- Now let's test a call. Look up FOOBAR in the dictionary.
-    mapM ppush $ map (I8 . ascii) term
-    ppush $ I32 $ fromIntegral $ length term
+    let mainTerm = "REPL"
+    mapM ppush $ map (I8 . ascii) mainTerm
+    ppush $ I32 $ fromIntegral $ length mainTerm
     x86 $ callLabel "TERM_LOOK"
     assertPtop 1 "Foobar's dictionary entry not found!"
     pdrop 1
@@ -181,7 +193,7 @@ mainLang = do
     -- The stack top now contains the address of the term. print it, it should
     -- match the first print.
 
-    -- Call foobar.
+    -- Call REPL.
     ppeek rax
     x86 $ call rax
     
