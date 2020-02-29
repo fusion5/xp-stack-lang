@@ -6,6 +6,7 @@ module Lang.Lang where
 -- X86 monad.
 
 import Control.Monad.Trans.State
+import Control.Monad.Except
 
 import X86.Datatypes
 import X86.X86
@@ -93,6 +94,7 @@ data Dict =
 pushInitialDictionary = do
     docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
     x86 $ mov r11 $ I64 0
+    pushASMDef "NOT"
     pushASMDef "PDROP"
     pushASMDef "EQ"
     pushASMDef "LT"
@@ -114,15 +116,16 @@ pushInitialDictionary = do
     pushASMDef "WRITE_CHAR"
     pushASMDef "READ_CHAR"
     pushASMDef "DBG_DUMP_PTOP_64"
-    pushASMDef "NOT"
-    pushSEQDef "PUSH3"   [] [lit 3]
-    pushSEQDef "PUSH2"   [] [run "PUSH1", run "PUSH1", run "PLUS"]
+    pushSEQDef "PUSH3" [] [lit 3]
+    pushSEQDef "PUSH2" [] [run "PUSH1", run "PUSH1", run "PLUS"]
     pushSEQDef "BETWEEN" 
         [("num", baseWord), ("low", baseWord), ("hi", baseWord)] 
         [
             -- TODO: Think of a way of referring to those parameters
             -- from the call stack, possibly using a textual reference...
             -- (2020-02-26 19:35)
+            -- par "num",
+            -- par "low",
             lit 5
         ]
     pushSEQDef "SHOW_BYTE_0_9" [] [
@@ -247,15 +250,17 @@ pushASMDef bodyLabel = do
     docLang "rsi is always >= r11."
     x86 $ mov r11 rsi
 
-pushSeqItem :: SeqInstr -> Lang ()
-pushSeqItem (SeqDefTerm term) = do
+pushSeqItem :: [SeqParam] -> SeqInstr -> Lang ()
+pushSeqItem _  (SeqDefTerm term) = do
+    docLang "Push the term to look up"
     mapM ppush $ map (I8 . ascii) term
     ppush $ I32 $ fromIntegral $ length term
+    docLang "Look it up"
     x86 $ callLabel "TERM_LOOK"
     -- Commented for debug purposes (more compact code)
-    assertPtop 1 "Undefined dictionary reference"
+    -- assertPtop 1 "Undefined dictionary reference"
     pdrop 1
-pushSeqItem (SeqDefLit64 n) = do
+pushSeqItem _ (SeqDefLit64 n) = do
     -- As usual, things on the stack go on reverse.
     -- First we add the literal value that we wish to push on
     -- the stack.
@@ -264,12 +269,43 @@ pushSeqItem (SeqDefLit64 n) = do
     x86 $ mov rax $ I64 n
     ppush $ rax
     docLang "Then follows the LIT call."
-    pushSeqItem $ SeqDefTerm "LIT"
+    pushSeqItem [] (SeqDefTerm "LIT")
+pushSeqItem params (SeqDefParam term) = do
+    docLang "A parameter reference: a function needs to peer down "
+    docLang "the parameter stack and push onto pstack. Here we " 
+    docLang "compute the offset and the length that needs to be pushed "
+    docLang "on the stack."
+    case lookup term paramOffsets of
+        Nothing     -> x86 $ asm $ throwError $ 
+            "Undefined parameter reference: " ++ term
+        Just offset -> x86 $ asm $ throwError "Unimplemented"
+        -- TODO: Define a CPEER (:w64:w64) that pushes on the stack 
+        -- a parameter from the call stack
+        -- (2020-02-28)
+    where paramOffsets = computeOffsets params
+
+computeOffsets :: [(String, Type)] 
+               -> [(String, Word32)]
+computeOffsets xs = zipWith (\(s, t) o -> (s, o)) xs offs
+  where
+    sizes   = map (sizeof . snd) xs
+    sumoffs = accum sizes
+    t1      = head sumoffs
+    offs    = map ((-) t1) sumoffs
+    
+accum :: Num a => [a] -> [a]
+accum = a 0
+  where
+  a _ []     = []
+  a s (x:xs) = s+x : a (s+x) xs
 
 
 -- In the end this function will have to be implemented in the language
 -- itself...
-pushSEQDef :: String -> [SeqParam] -> [SeqInstr] -> Lang ()
+pushSEQDef :: String 
+           -> [SeqParam] 
+           -> [SeqInstr] 
+           -> Lang ()
 pushSEQDef bodyLabel params calls = do
     -- TODO: Resolve the dictionary pointers of the parameters
     -- in 'calls' and emit them on the stack as well. 
@@ -280,7 +316,7 @@ pushSEQDef bodyLabel params calls = do
     docLang "Then push the call sequence in reverse order."
     ppush $ I32 0
     -- Reverse bc. the stack grows opposite to addresses
-    mapM pushSeqItem $ reverse calls
+    mapM (pushSeqItem params) $ reverse calls
     docLang $ "SEQ dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     -- let x = "DICT_" ++ bodyLabel
@@ -634,8 +670,12 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
         x86 $ cmp rdx $ I32 10
         x86 $ jl "DBG_DUMP_PTOP_64_LT10"
         docLang "Value between [10 and 15]"
-
+        docLang "Add 55 to rdx"
+        x86 $ add rdx $ I32 55
+        ppush rdx
+        x86 $ dec rcx
         x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
+
         x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_LT10"
         docLang "Value between [0 and 9]"
         docLang "Add 0x30 to rdx"
@@ -645,7 +685,8 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
         x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
 
         x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_END"
-        docLang "16 times write char. Conveniently, this also reverses the "
+        docLang "16 times write char. Conveniently, using the stack before "
+        docLang "printing reverses the "
         docLang "order of the chars (which we need to do)."
         replicateM 16 $ do
             x86 $ callLabel "WRITE_CHAR"
@@ -821,6 +862,8 @@ defineEval = do
         docX86 "rcx is our loop counter. Initialize to .len"
         mov rcx (derefOffset r9 24) 
 
+        -- Memcpy from pstack onto cstack:
+ 
         asm $ setLabel "EVAL_SEQ_LOOP_START"
         docX86 "Has our loop counter finished?"
         cmp rcx $ I32 0 -- rcx is our loop counter

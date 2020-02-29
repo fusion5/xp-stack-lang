@@ -39,11 +39,13 @@ word_rex   = bit 6
 word_rex_w = bit 3 -- Indicates that the instruction is promoted to 64 bits
 word_rex_r = bit 2 -- Permits access to registers R8-R15 of an operand
 word_rex_b = bit 0 -- Permits access to registers R8-R15 of an operand
-word_rex_x = bit 1 -- ?? Not yet sure what this does.
+word_rex_x = bit 1 -- Unknown what this does
 
 -- REX is a prefix often used in 64 bit mode instructions.
 rex   a b = emit1 $ rex_   a b
 rex_w a b = emit1 $ rex_w_ a b
+
+rex_b reg = if isSupReg reg then emit1 (word_rex .|. word_rex_b) else return ()
 
 rex_w_ a b = word_rex_w .|. rex_ a b
 rex_ mayOper1 mayOper2 = word_rex 
@@ -194,6 +196,7 @@ mov_ o1@(RR64 dst offset) o2@(I32 src)
 mov_ o1@(RR64 dst offset) o2@(I8 src)
     | offset < min8BitValI || max8BitValI < offset = do 
         -- write single byte at address
+        rex_b dst
         emit1 $ 0xC6
         emit1 $ modRegRef32bitOffset .|. index dst -- ModRM byte
         weirdRSPHack dst
@@ -201,6 +204,7 @@ mov_ o1@(RR64 dst offset) o2@(I8 src)
         imm8  $ fromIntegral src
     | min8BitValI <= offset && offset <= max8BitValI = do
         -- write single byte at address
+        rex_b dst
         emit1 $ 0xC6
         emit1 $ modRegRef8bitOffset .|. index dst -- ModRM byte
         weirdRSPHack dst
@@ -208,6 +212,7 @@ mov_ o1@(RR64 dst offset) o2@(I8 src)
         imm8  $ fromIntegral src
 mov_ o1@(RR64 dst offset) o2@(R8 src)
     | min8BitValI <= offset && offset <= max8BitValI = do
+        rex_b dst
         emit1 $ 0x88
         emit1 $ modRegRef8bitOffset  .|.
             (index8 src `shiftL` 3)  .|.

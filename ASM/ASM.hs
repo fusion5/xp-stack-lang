@@ -1,5 +1,6 @@
 {-# Language TypeSynonymInstances #-}
 {-# Language FlexibleInstances #-}
+{-# Language FlexibleContexts #-}
 module ASM.ASM where
 
 import Control.Monad.Except
@@ -377,7 +378,7 @@ replaceStringRefEmits vmemOff64 addrs emit rest =
       Nothing -> return $ emit:rest
       Just s  -> 
         case M.lookup s addrs of
-          Nothing   -> error $ "String reference not found: " ++ s     
+          Nothing   -> throwError $ "String reference not found: " ++ s     
           Just s64r -> do
             let ref = bytes putWord64le $ vmemOff64 + s64r
             return $ emit:Prelude.map SWord8 ref ++ rest

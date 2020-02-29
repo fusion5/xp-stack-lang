@@ -22,13 +22,17 @@ type SeqParam = (String, Type)
 
 data SeqInstr =
     SeqDefLit64 Word64
-  | SeqDefTerm String
+  | SeqDefTerm  String
+  | SeqDefParam String
 
 lit :: Word64 -> SeqInstr
 lit = SeqDefLit64
 
 run :: String -> SeqInstr
 run = SeqDefTerm
+
+par :: String -> SeqInstr
+par = SeqDefParam
 
 envAddType :: String 
            -> Type 
