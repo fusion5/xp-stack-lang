@@ -83,10 +83,9 @@ initDynamicDefinitionsMemory = do
     mov rbx r9          -- start address
     mov rcx (I64 10000) -- 10k bytes length
     mov rdx $ I64 (linux_prot_exec .|. linux_prot_write .|. linux_prot_read)
-    -}
 
     docX86 "Temporary: try out if it's really executable. "
-    docX86 "copy at r9 the code for `ppush 10`"
+    docX86 "copy at r9 the code for `ppush 0x42`"
     docX86 "X86: sub RSI 8"
     docX86 "48 81 EE 08 00 00 00"
     mov (derefOffset r9 0) (I8 0x48)
@@ -97,12 +96,13 @@ initDynamicDefinitionsMemory = do
     mov (derefOffset r9 5) (I8 0x00)
     mov (derefOffset r9 6) (I8 0x00)
 
-    docX86 "X86: mov [RSI+0] <- 10"
+    docX86 "X86: mov [RSI+0] <- 0x42"
     docX86 "48 C7 46 00 0A 00 00 00"
     mov (derefOffset r9 7)  (I8 0x48)
     mov (derefOffset r9 8)  (I8 0xC7)
     mov (derefOffset r9 9)  (I8 0x46)
     mov (derefOffset r9 10) (I8 0x00)
+
     mov (derefOffset r9 11) (I8 0x42)
     mov (derefOffset r9 12) (I8 0x00)
     mov (derefOffset r9 13) (I8 0x00)
@@ -110,6 +110,8 @@ initDynamicDefinitionsMemory = do
     
     docX86 "X86: ret"
     mov (derefOffset r9 15) (I8 0xC3)
+    add r9 (I32 15)
+    -}
 
 mainLang = do
     docLang "Read from stdin the dict. entry that we should interpret."
@@ -130,10 +132,60 @@ mainLang = do
     -- assertPtop (fromIntegral $ fnv1 [0x61, 0x62, 0x63]) 
     --    "The hash should match the one computed in HS"
 
-    -- x86 $ initDynamicDefinitionsMemory
-    -- x86 $ call r9 -- CAll the first definition in the dynamic defs memory.
-    -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+    pushInitialSimpleDictionary
 
+    x86 $ initDynamicDefinitionsMemory
+
+    -- The addition of the dictionary definition of FOOBAR (concrete, will 
+    -- have to be abstracted)
+    let term = "FOOBARS"
+    -- the current r9 is the new term's destined memory location.
+    ppush r9
+    -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+    mapM ppush $ map (I8 . ascii) term
+    ppush $ I32 $ fromIntegral $ length term
+    x86 $ callLabel "TERM_HASH"
+    -- the stack now has the hash too.
+    -- Push the previous entry pointer
+    ppush r11
+    -- We have now built our [ prev ][ name ][ addr ] record on the stack.
+    -- set it as the top dictionary entry:
+    x86 $ mov r11 rsi
+    -- Emit (push) FOOBAR's BODY at address r9 (and increase r9):
+    -- 1. Emit a push 30
+    ppush $ I32 48
+    x86 $ callLabel "EMIT_LIT_64"
+
+    -- 2. Emit a call to write_char
+    let term2 = "WRITE_CHAR"
+    mapM ppush $ map (I8 . ascii) term2
+    ppush $ I32 $ fromIntegral $ length term2
+    x86 $ callLabel "EMIT_CALL"
+
+    -- 3. Emit a return.
+    x86 $ callLabel "EMIT_RET"
+    -- This concludes our definition of FOOBAR.
+
+    -- Now let's test a call. Look up FOOBAR in the dictionary.
+    mapM ppush $ map (I8 . ascii) term
+    ppush $ I32 $ fromIntegral $ length term
+    x86 $ callLabel "TERM_LOOK"
+    assertPtop 1 "Foobar's dictionary entry not found!"
+    pdrop 1
+    -- Now take the '.addr' field from the dictionary term found by LOOK:
+    ppop rax
+    x86 $ mov rax (derefOffset rax 16)
+    ppush rax
+
+    -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+    -- The stack top now contains the address of the term. print it, it should
+    -- match the first print.
+
+    -- Call foobar.
+    ppeek rax
+    x86 $ call rax
+    
+    {-
     pushInitialDictionary
 
     docLang "The 0 is needed because after it will follow the "
@@ -158,6 +210,7 @@ mainLang = do
     x86 $ mov r8 rsi
     x86 $ callLabel "EVAL"
 
+    -}
     x86 $ callLabel "EXIT"
 
     {-

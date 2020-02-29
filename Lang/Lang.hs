@@ -68,6 +68,9 @@ defineBaseFuns = do
     defineDUP
     defineNOT
     defineLIT
+    defineEMITLIT
+    defineEMITCALL
+    defineEMITRET
     defineIFPOP0
     defineIFPEEK0
     defineDbgDumpPtop64
@@ -85,6 +88,41 @@ data Dict =
           Int            -- Function name length
           String         -- Function name
           Word64         -- The address of the body of the function.
+
+
+pushSimpleDef :: String -> Lang ()
+pushSimpleDef bodyLabel = do
+    docLang $ "ASM Dictionary entry for " ++ bodyLabel
+    docLang "ASM or term sequence address in memory:"
+    x86 $ mov rax $ L64 bodyLabel
+    ppush rax
+    docLang "Hash (for easy search):"
+    x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
+    ppush rax
+    docLang "Previous entry pointer:"
+    ppush r11
+    x86 $ mov r11 rsi
+
+pushInitialSimpleDictionary = do
+    docLang "Simple Dictionary of cells [ prev ][ name ][ addr ]"
+    x86 $ mov r11 $ I64 0
+    pushSimpleDef "NOT"
+    pushSimpleDef "PDROP"
+    pushSimpleDef "EQ"
+    pushSimpleDef "LT"
+    pushSimpleDef "LTE"
+    pushSimpleDef "GT"
+    pushSimpleDef "GTE"
+    pushSimpleDef "MINUS"
+    pushSimpleDef "TIMES"
+    pushSimpleDef "AND"
+    pushSimpleDef "LIT"
+    pushSimpleDef "EXIT"
+    pushSimpleDef "DUP"
+    pushSimpleDef "PLUS"
+    pushSimpleDef "PUSH1"
+    pushSimpleDef "WRITE_CHAR"
+    pushSimpleDef "READ_CHAR"
 
 -- Bootstrap a kind of Forth interpreter dictionary.
 -- The dictionary is a linked list of definitions. A definition consists
@@ -109,12 +147,12 @@ pushInitialDictionary = do
     pushASMDef "DUP"
     pushASMDef "PLUS"
     pushASMDef "PUSH1"
+    pushASMDef "WRITE_CHAR"
+    pushASMDef "READ_CHAR"
     pushASMDef "IFPOP0" -- Pops and executes the next word only if the popped
                         -- value equals 0.
     pushASMDef "IFPEEK0" -- Peeks and executes the next word only if the top
                          -- stack value equals 0.
-    pushASMDef "WRITE_CHAR"
-    pushASMDef "READ_CHAR"
     pushASMDef "DBG_DUMP_PTOP_64"
     pushSEQDef "PUSH3" [] [lit 3]
     pushSEQDef "PUSH2" [] [run "PUSH1", run "PUSH1", run "PLUS"]
@@ -468,6 +506,104 @@ defineLIT = defFunBasic funName ty body
         x86 $ mov rax (derefOffset r8 0)
         ppush rax
         x86 $ ret
+
+
+-- (:w8 p1:...:w8 pn:w64 n -- :)
+defineEMITCALL :: Lang () 
+defineEMITCALL = defFunBasic "EMIT_CALL" undefined body
+  where
+    body = do
+        docLang "Emit a call to a certain function, the name of which"
+        docLang "is on the stack."
+        x86 $ callLabel "TERM_LOOK"
+        assertPtop 1 "Trying to call an undefined term!"
+        pdrop 1
+        docLang "Take the .addr value of the dictionary entry at rax"
+
+        ppop rax
+        x86 $ mov rax (derefOffset rax 16)
+
+        -- CALL using E8 WARNING! THis uses relative addresses!
+        -- It's trickier (but we will have to optimize this probably)
+        -- https://stackoverflow.com/questions/19552158
+        -- rax = 00000000C00008EB
+        {-
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0xE8)
+            mov (derefOffset r9 1) al
+            sar rax (I8 8)
+            mov (derefOffset r9 2) al
+            sar rax (I8 8)
+            mov (derefOffset r9 3) al
+            sar rax (I8 8)
+            mov (derefOffset r9 4) al
+            add r9 (I32 5)
+        -}
+        -- mov rax <addr>
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0xB8)
+            mov (derefOffset r9 2) rax
+            add r9 (I32 10)
+
+        -- call rax
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0xFF)
+            mov (derefOffset r9 1) (I8 0xD0)
+            add r9 (I32 2)
+            
+            
+
+defineEMITRET :: Lang ()
+defineEMITRET = defFunBasic "EMIT_RET" undefined body 
+  where
+    body = do
+        docLang "Emit a return statement which should be always present at "
+        docLang "the end of an assembly body definition."
+        docLang "X86: ret"
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0xC3)
+            inc r9
+           
+defineEMITLIT :: Lang ()
+defineEMITLIT = defFunBasic funName ty body
+  where
+    funName = "EMIT_LIT_64"
+    ty      = undefined
+    body    = do
+        docLang "Emit assembly code in the dynamic code area"
+        docLang "That pushes a 64bit literal value on the stack."
+        x86 $ xor rax rax
+        ppop rax -- Take the literal that we need to push and place it in rax
+
+        -- TODO: Improve language (repeated code)
+        docLang "X86: sub RSI 8"
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0x81)
+            mov (derefOffset r9 2) (I8 0xEE)
+            mov (derefOffset r9 3) (I8 0x08)
+            mov (derefOffset r9 4) (I8 0x00)
+            mov (derefOffset r9 5) (I8 0x00)
+            mov (derefOffset r9 6) (I8 0x00)
+            add r9 (I32 7)
+
+        docLang "X86: mov [RSI+0] <- IMM32"
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0xC7)
+            mov (derefOffset r9 2) (I8 0x46)
+            mov (derefOffset r9 3) (I8 0x00)
+            -- TODO: simplify - copy from 32 bit register eax 4 bytes directly
+            mov (derefOffset r9 4) al
+            sar rax (I8 8)
+            mov (derefOffset r9 5) al
+            sar rax (I8 8)
+            mov (derefOffset r9 6) al
+            sar rax (I8 8)
+            mov (derefOffset r9 7) al
+            add r9 (I32 8)
+
         
 {-
 definePTopWrite :: Lang ()
