@@ -1,0 +1,13 @@
+What is this?
+
+This repository contains a personal experimentation project that started
+in 2019 with the goal of exploring implementation methods of a stack-based
+programming language inspired by Forth. 
+
+It's a work in progress currently undergoing refactoring.
+
+Goals:
+- Generate just-in-time code from dictionary definitions (stack procedures) 
+  entered in a REPL
+- Add strong typing over the procedures
+- ?
