@@ -44,7 +44,7 @@ instance Documentation (Lang ()) where
 docLang :: String -> Lang ()
 docLang = doc
 
-defineBaseFuns = do
+defineBaseDefBodies = do
     definePDrop
 
     defineCMP "EQ"  je
@@ -64,6 +64,8 @@ defineBaseFuns = do
     defineRdChrLinux
     defineWrChrLinux
 
+    defineRdPrntChr 
+
     defineTermReadLinux
 
     defineTermHash
@@ -78,6 +80,7 @@ defineBaseFuns = do
     defineIFPEEK0
     defineDbgDumpPtop64
     defineREPL
+    defineREPLDef
 
     definePush1 -- Dummy test function that just pushes constant 1
     definePushK -- Dummy test function that just pushes constant 'K'
@@ -96,13 +99,13 @@ data Dict =
 
 
 pushSimpleDef :: String -> Lang ()
-pushSimpleDef bodyLabel = do
-    docLang $ "ASM Dictionary entry for " ++ bodyLabel
+pushSimpleDef defName = do
+    docLang $ "ASM Dictionary entry for " ++ defName
     docLang "ASM or term sequence address in memory:"
-    x86 $ mov rax $ L64 bodyLabel
+    x86 $ mov rax $ L64 defName
     ppush rax
-    docLang "Hash (for easy search):"
-    x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
+    docLang "Definition name hash (for easy search):"
+    x86 $ mov rax $ I64 $ fnv1 $ map ascii defName
     ppush rax
     docLang "Previous entry pointer:"
     ppush r11
@@ -116,7 +119,7 @@ writeMsgHelper msg = do
             mov rcx (S64 msg)
             int
 
-pushInitialSimpleDictionary = do
+pushBaseDict = do
     docLang "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     x86 $ mov r11 $ I64 0
     pushSimpleDef "NOT"
@@ -143,7 +146,7 @@ pushInitialSimpleDictionary = do
     pushSimpleDef "TERM_HASH"
     pushSimpleDef "REPL"
     docLang "Dictionary end marking point (LOOKUP ends here)"
-    ppush $ I32 0
+    ppushI32 0
 
 -- Bootstrap a kind of Forth interpreter dictionary.
 -- The dictionary is a linked list of definitions. A definition consists
@@ -434,6 +437,8 @@ defineNOT = defFunBasic funName ty body
         x86 $ ret
 
 
+-- Type : -> :w64:w64
+-- Func : -> :term_address:success_or_failure
 defineTermLook :: Lang ()
 defineTermLook = defFunBasic funName ty body
   where
@@ -527,6 +532,74 @@ defineLIT = defFunBasic funName ty body
         ppush rax
         x86 $ ret
 
+defineREPLDef :: Lang ()
+defineREPLDef = defFunBasic "REPL_DEF" undefined body
+  where
+    body = do
+        docLang "REPL Definition subfunction."
+        docLang "This is the REPL part that reads new definitions."
+        docLang "It is not callable directly from the dictionary, it's "
+        docLang "only called from REPL."
+
+        docLang "Read and hash the term:"
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Could not read definition term."
+        pdrop 1
+        x86 $ callLabel "TERM_HASH"
+
+        docLang "Read a char, and ensure it is the equal sign:"
+        x86 $ callLabel "READ_PRNT_CHAR"
+        assertPtop 1 "Could not read a printable char."
+        pdrop 1
+
+        x86 $ xor rax rax
+        ppopW8 al -- The char returned by READ_PRNT_CHAR
+        docLang "The ascii code for equal '=' is 0x3D"
+        x86 $ mov rbx $ I64 $ 0x3D
+        x86 $ cmp rax rbx
+        x86 $ jeNear "REPL_DEF_READ_TERMS"
+        docLang "We have not read the equal sign. Return"
+        x86 $ writeMsgHelper "Error: expecting an '=' character after the term.\n"
+        x86 $ ret
+        x86 $ asm $ setLabel "REPL_DEF_READ_TERMS"
+
+        ppop rax -- The hash of the term we're defining
+        docLang "Build our [ prev ][ name hash ][ addr ] record on the stack"
+        docLang "for the new dictionary entry..."
+        docLang "Unfortunately this assumes that the operation will"
+        docLang "succeed. TODO: roll back "
+        docLang "the entire operation if any of the terms entered have "
+        docLang "failed to be resolved in the dict:"
+        ppush r9  -- addr
+        ppush rax -- name hash 
+        ppush r11 -- prev
+        x86 $ mov r11 rsi
+
+        x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP"
+
+        x86 $ callLabel "TERM_READ"
+        assertPtop 1 "Failed to parse term within definition body\n"
+        pdrop 1
+
+        x86 $ callLabel "TERM_LOOK"
+        ppop rax
+        -- If we have read an unknown term, end the loop.
+        -- TODO: If we have read a '.' then end the loop (mark the
+        -- end of the definition somehow).
+        x86 $ cmp rax (I32 0)
+        x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
+
+        docLang "Successful term read, emit a call command to the"
+        docLang "term address:"
+        x86 $ callLabel "EMIT_CALL"
+        x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
+
+        docLang "Where we break from the read loop:"
+        x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP_END"
+
+        x86 $ callLabel "EMIT_RET"
+        x86 $ writeMsgHelper "Definition added.\n"
+        x86 $ ret
 
 defineREPL :: Lang ()
 defineREPL = defFunBasic "REPL" undefined body
@@ -535,104 +608,61 @@ defineREPL = defFunBasic "REPL" undefined body
         docLang "REPL"
         x86 $ asm $ setLabel "REPL_START"
 
+        docLang "Read a term:"
         x86 $ callLabel "TERM_READ"
         assertPtop 1 "TERM_READ returned an error!"
         pdrop 1
-        -- Hash the term we've read.
+        docLang "Hash the term we've read:"
         x86 $ callLabel "TERM_HASH"
         -- x86 $ callLabel "DBG_DUMP_PTOP_64"
 
         -- The first word is the operation we wish to make.
         -- There are two operations for now, define and call.
+        docLang "Switch on a different functionality"
+        docLang "depending on the hash of the term we've just read:"
 
         ppop rax
         x86 $ mov rbx (I64 $ fnv1s "def")
         x86 $ cmp rax rbx
-        x86 $ jeNear "REPL_DEF"
+        x86 $ jeNear "REPL_DEF_CALL"
         x86 $ mov rbx (I64 $ fnv1s "run")
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_RUN"
         x86 $ mov rbx (I64 $ fnv1s "q")
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_QUIT"
+        
+        x86 $ writeMsgHelper "Unknown command! (expected: def/run/q)\n"
         x86 $ jmpLabel "REPL_START"
 
-        x86 $ asm $ setLabel "REPL_DEF"
-
-        -- The first word in a define must be the term we 
-        -- wish to define.
-
-        x86 $ callLabel "TERM_READ"
-        assertPtop 1 "Could not read definition term name."
-        pdrop 1
-        x86 $ callLabel "TERM_HASH"
-
-        -- We have the term hash, now we expect the equal sign:
-        x86 $ callLabel "TERM_READ"
-        assertPtop 1 "Could not read equal sign in the definition."
-        pdrop 1
-        x86 $ callLabel "TERM_HASH"
-        x86 $ mov rbx (I64 $ fnv1s "=")
-        ppop rax
-        x86 $ cmp rax rbx
-        x86 $ je "REPL_READ_DEF_TERMS"
-        x86 $ writeMsgHelper "Error: in a definition, after the term, an equal sign is expected.\n"
-        x86 $ jmpLabel "REPL_START"
-
-        -- READ DEF. TERMS
-        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS"
-        ppop rax -- The hash of the definition name
-
-        docLang "Build our [ prev ][ name ][ addr ] record on the stack"
-        docLang "for the new dictionary entry..."
-        docLang "Unfortunately this assumes that the operation will"
-        docLang "succeed. TODO: figure out a way to do this only at the"
-        docLang "end if the whole definition was successfully read."
-        ppush r9  -- addr
-        ppush rax -- name hash 
-        ppush r11 -- prev
-        x86 $ mov r11 rsi
-
-        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS_LOOP"
-
-        -- START READ DEF. LOOP
-        x86 $ callLabel "TERM_READ"
-        assertPtop 1 "Could not read definition term"
-        pdrop 1
-
-        x86 $ callLabel "TERM_LOOK"
-        ppop rax
-        -- If we have read an unknown term, end the loop.
-        x86 $ cmp rax (I32 0)
-        x86 $ je "REPL_READ_DEF_TERMS_LOOP_END"
-
-        x86 $ callLabel "EMIT_CALL"
-
-        x86 $ jmpLabel "REPL_READ_DEF_TERMS_LOOP"
-        -- END READ DEF. LOOP
- 
-        x86 $ asm $ setLabel "REPL_READ_DEF_TERMS_LOOP_END"
-        -- Write definition ended!
-        x86 $ writeMsgHelper "Definition added.\n"
-
-        x86 $ callLabel "EMIT_RET"
-
-        x86 $ jmpLabel "REPL_START"
-
+        x86 $ asm $ setLabel "REPL_DEF_CALL"
+        x86 $ callLabel "REPL_DEF"
+        x86 $ jmpLabel "REPL_START" -- After the definition, resume from the 
+                                    -- beginning.
         x86 $ asm $ setLabel "REPL_RUN"
         x86 $ callLabel "TERM_READ"
         assertPtop 1 "Could not read definition term"
         pdrop 1
         x86 $ callLabel "TERM_LOOK"
-        assertPtop 1 "Trying to run an unknown term"
-        pdrop 1
+        -- Check for an unknown term (do nothing in that case).
+        ppop rax
+        x86 $ cmp rax (I32 0)
+        x86 $ jeNear "REPL_RUN_UNDEFINED"
         
         -- Now take the '.addr' field from the dictionary term found by LOOK:
         ppop rax
         x86 $ mov rax (derefOffset rax 16)
         x86 $ call rax
 
+        x86 $ writeMsgHelper "Run term done.\n"
         x86 $ jmpLabel "REPL_START"
+
+        x86 $ asm $ setLabel "REPL_RUN_UNDEFINED"
+        assertPtop 0 "TERM_LOOK failed so the result should be 0."
+        pdrop 1 -- Drop the 0 From TERM_LOOK
+        x86 $ writeMsgHelper "Undefined term!\n"
+        x86 $ jmpLabel "REPL_START"
+         
 
         x86 $ asm $ setLabel "REPL_QUIT"
         
@@ -790,30 +820,48 @@ defineTermHash = defFunBasic funName ty body
         ppush rax
         x86 $ ret
 
+defineConsumeWhitespace :: Lang ()
+defineConsumeWhitespace = defFunBasic funName ty body
+  where
+    funName = ""
+    ty      = undefined
+    body    = do
+        docLang "Consume input characters "
+
+-- Type : -> w8...w8:w64:w64
+-- Func : -> w_0...w_n-1:n:success
 defineTermReadLinux :: Lang ()
 defineTermReadLinux = defFunBasic funName ty body
   where
     funName = "TERM_READ"
     ty      = undefined -- Unexpressible atm.
     body    = do
-        docLang "Reads characters until a space or a new line char is read."
-        docLang "It pushes on the stack an array of w8 then it pushes a"
+
+        docLang "READ_PRNT_CHAR consumes any whitespace present before"
+        docLang "the term and returns on the stack the first non-ws char"
+        docLang "encountered."
+        x86 $ callLabel "READ_PRNT_CHAR"
+
+        -- x86 $ writeMsgHelper "READ_PRNT_CHAR called, it returned:\n"
+        -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+        assertPtop 1 "READ_PRNT_CHAR failed\n"
+        pdrop 1
+
+        -- x86 $ writeMsgHelper "This is what it read:\n"
+        -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+
+        docLang "Reads characters until a space or a control "
+        docLang "char is read."
+        docLang "It pushes on the stack an array of w8s then it pushes a"
         docLang "w64 indicating how many chars have been read,"
         docLang "followed by a w64 indicating success or failure."
-
         docLang "r15 counts the chars that are successfully read."
         x86 $ xor r15 r15
-
-        docLang "Prepare registers for the system call:"
-        docLang "We'll always read 1 char:"
-        x86 $ mov rdx $ I64 0x01 
-        docLang "Always use file descriptor 0 (stdin):"
-        x86 $ xor rbx rbx
+        x86 $ inc r15 -- If we've reached this point we have read 1 char.
 
         do  x86 $ asm $ setLabel "TERM_READ_WHILE"
             docLang "Use the linux_sys_read system call:"
             x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-
             docLang "Allocate 8 bytes on the param stack:"
             ppush $ I8 0x00
 
@@ -824,13 +872,14 @@ defineTermReadLinux = defFunBasic funName ty body
             x86 $ cmp rax $ I32 0x00
             x86 $ je "TERM_READ_ERROR"
 
-            docLang "If the char we just read is a space or eol, break the loop:"
+            docLang "Probe the char we just read if it's a space or ctrl "
+            docLang "break the loop:"
             x86 $ xor rax rax
             ptopW8 al
             x86 $ cmp rax $ I32 0x20 -- Space
-            x86 $ je "TERM_READ_BREAK"
-            x86 $ cmp rax $ I32 0x0A -- New Line
-            x86 $ je "TERM_READ_BREAK"
+            x86 $ jleNear "TERM_READ_BREAK"
+            x86 $ cmp rax $ I32 0x7F -- ESC
+            x86 $ jeNear "TERM_READ_BREAK"
             
             x86 $ inc r15
 
@@ -838,15 +887,54 @@ defineTermReadLinux = defFunBasic funName ty body
             x86 $ jmpLabel "TERM_READ_WHILE"
 
         x86 $ asm $ setLabel "TERM_READ_BREAK"
-        ppopW8 al
+        ppopW8 al     -- Free the stack from the last allocation
         ppush $ r15   -- Num of chars read
         ppush $ I32 1 -- Success
         x86 $ ret
 
         x86 $ asm $ setLabel "TERM_READ_ERROR"
+        ppopW8 al     -- Free the stack from the last allocation
         ppush $ r15   -- Num of chars read
         ppush $ I32 0 -- Error
         x86 $ ret
+
+-- Parses input. Skips whitespace, control characters, etc. 
+-- Stops at the first non-such char and pushes it on the stack.
+-- Type : -> :w8:w64
+-- Func : -> :read_char:success
+defineRdPrntChr :: Lang ()
+defineRdPrntChr = defFunBasic funName undefined body
+  where
+    funName = "READ_PRNT_CHAR"
+    body = do
+        docLang "Allocate 1 byte on the param stack to read our"
+        docLang "first non-whitespace character:"
+        ppush $ I8 0x00
+
+        x86 $ asm $ setLabel "RPC_WHILE"
+        x86 $ mov rdx $ I64 0x01 -- Read 1 char
+        x86 $ xor rbx rbx        -- From stdin
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
+        x86 $ mov rcx rsi        -- Into the pstack
+        x86 $ int
+
+        x86 $ cmp rax $ I32 0x00
+        x86 $ jeNear "RPC_ERROR"
+
+        x86 $ xor rax rax
+        ptopW8 al
+
+        -- TODO: Jump if less than or equal to 0x20 (skip ALL ctrl chars)
+        x86 $ cmp rax $ I32 0x20 
+        x86 $ jleNear "RPC_WHILE" -- Space or Control character, skip
+        x86 $ cmp rax $ I32 0x7F
+        x86 $ jeNear  "RPC_WHILE" -- ESC, skip
+
+        ppush $ I32 1 -- Success
+        x86 $ ret
+
+        x86 $ asm $ setLabel "RPC_ERROR"
+        ppush $ I32 0 -- Fail
 
 -- Takes 1 parameter and adds input from stdin
 -- on the parameters stack as well as the result.
@@ -859,7 +947,7 @@ defineRdChrLinux = defFunBasic funName ty body
     funName = "READ_CHAR"
     ty      = TyFunc "READ_CHAR" TyEmpty (TyProd baseWord TyWord)
     body = do
-        docLang "Allocate 8 bytes on the param stack:"
+        docLang "Allocate 1 byte on the param stack:"
         ppush $ I8 0x00
 
         x86 $ do 
@@ -1298,6 +1386,16 @@ ppush v | supported v = do
           supported (R64 _) = True
           supported _ = False
 ppush v = error $ "ppush doesn't support " ++ show v
+
+-- Push a string on the stack
+ppushStr :: String -> Lang ()
+ppushStr s = do 
+    mapM ppush $ map (I8 . ascii) s
+    return ()
+
+ppushI32 :: (Integral a) => a -> Lang ()
+ppushI32 n = do
+    ppush $ I32 $ fromIntegral n
 
 -- A function made up of assembly which has a type.
 -- This is used to define the built-in (basic) functions

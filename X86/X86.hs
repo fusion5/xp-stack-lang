@@ -343,17 +343,18 @@ je label = do
     asm $ bflush
 
 -- je can only jump -/+128 so we introduce near jumps
-jeNear label = do
+jNear code label = do
     emit1 0x0F
-    emit1 0x84
+    emit1 code
     asm $ emitLabelOff32 label
     asm $ bflush
 
-jneNear label = do
-    emit1 0x0F
-    emit1 0x85
-    asm $ emitLabelOff32 label
-    asm $ bflush
+jeNear  = jNear 0x84 
+jgNear  = jNear 0x8F
+jgeNear = jNear 0x8D
+jlNear  = jNear 0x8C
+jleNear = jNear 0x8E
+jneNear = jNear 0x85 
 
 jl :: String -> X86_64()
 jl label = do
