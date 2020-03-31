@@ -64,7 +64,8 @@ defineBaseDefBodies = do
     defineRdChrLinux
     defineWrChrLinux
 
-    defineRdPrntChr 
+    defineRdHeadW8
+    defineRdTailW8
 
     defineTermReadLinux
 
@@ -87,7 +88,7 @@ defineBaseDefBodies = do
 
     defineExit
 
-    defineEval
+    -- defineEval
 
     -- testSEQDefinitions
 
@@ -140,9 +141,9 @@ pushBaseDict = do
     pushSimpleDef "PUSHK"
     pushSimpleDef "WRITE_CHAR"
     pushSimpleDef "READ_CHAR"
+    pushSimpleDef "READ_PRINTABLES_W8"
     pushSimpleDef "DBG_DUMP_PTOP_64"
     pushSimpleDef "TERM_LOOK"
-    pushSimpleDef "TERM_READ"
     pushSimpleDef "TERM_HASH"
     pushSimpleDef "REPL"
     docLang "Dictionary end marking point (LOOKUP ends here)"
@@ -542,18 +543,18 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         docLang "only called from REPL."
 
         docLang "Read and hash the term:"
-        x86 $ callLabel "TERM_READ"
-        assertPtop 1 "Could not read definition term."
+        x86 $ callLabel "READ_PRINTABLES_W8"
+        assertPtop 1 "Could not read the term to define!\n"
         pdrop 1
         x86 $ callLabel "TERM_HASH"
 
         docLang "Read a char, and ensure it is the equal sign:"
-        x86 $ callLabel "READ_PRNT_CHAR"
-        assertPtop 1 "Could not read a printable char."
+        x86 $ callLabel "READ_HEAD_W8"
+        assertPtop 1 "Could not read a printable char!\n"
         pdrop 1
 
         x86 $ xor rax rax
-        ppopW8 al -- The char returned by READ_PRNT_CHAR
+        ppopW8 al -- The char returned by READ_HEAD_W8
         docLang "The ascii code for equal '=' is 0x3D"
         x86 $ mov rbx $ I64 $ 0x3D
         x86 $ cmp rax rbx
@@ -568,8 +569,8 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         docLang "for the new dictionary entry..."
         docLang "Unfortunately this assumes that the operation will"
         docLang "succeed. TODO: roll back "
-        docLang "the entire operation if any of the terms entered have "
-        docLang "failed to be resolved in the dict:"
+        docLang "the entire operation if the definition is in some way"
+        docLang "defectuous!"
         ppush r9  -- addr
         ppush rax -- name hash 
         ppush r11 -- prev
@@ -577,7 +578,13 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP"
 
-        x86 $ callLabel "TERM_READ"
+        docLang "First, read a character."
+        docLang "(TODO) If the first char is 0-9, parse a decimal integer."
+        docLang "(TODO) If the first char is \", go into string parsing mode."
+        docLang "Otherwise, read the rest of the characters and look up the "
+        docLang "term in the dictionary!"
+
+        x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Failed to parse term within definition body\n"
         pdrop 1
 
@@ -586,6 +593,8 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         -- If we have read an unknown term, end the loop.
         -- TODO: If we have read a '.' then end the loop (mark the
         -- end of the definition somehow).
+        docLang "If we have read an unknown term, then check whether we"
+        docLang "can parse it as an integer."
         x86 $ cmp rax (I32 0)
         x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
 
@@ -609,8 +618,8 @@ defineREPL = defFunBasic "REPL" undefined body
         x86 $ asm $ setLabel "REPL_START"
 
         docLang "Read a term:"
-        x86 $ callLabel "TERM_READ"
-        assertPtop 1 "TERM_READ returned an error!"
+        x86 $ callLabel "READ_PRINTABLES_W8"
+        assertPtop 1 "READ_PRINTABLES_W8 returned an error!"
         pdrop 1
         docLang "Hash the term we've read:"
         x86 $ callLabel "TERM_HASH"
@@ -640,7 +649,7 @@ defineREPL = defFunBasic "REPL" undefined body
         x86 $ jmpLabel "REPL_START" -- After the definition, resume from the 
                                     -- beginning.
         x86 $ asm $ setLabel "REPL_RUN"
-        x86 $ callLabel "TERM_READ"
+        x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Could not read definition term"
         pdrop 1
         x86 $ callLabel "TERM_LOOK"
@@ -828,23 +837,22 @@ defineConsumeWhitespace = defFunBasic funName ty body
     body    = do
         docLang "Consume input characters "
 
--- Type : -> w8...w8:w64:w64
--- Func : -> w_0...w_n-1:n:success
+-- Type: -> w8 :...:w8   :w64:w64
+-- Func: -> w_0:...:w_n-1:n  :success
+-- Pushes a sequence of printable characters that come from stdin
 defineTermReadLinux :: Lang ()
 defineTermReadLinux = defFunBasic funName ty body
   where
-    funName = "TERM_READ"
+    funName = "READ_PRINTABLES_W8"
     ty      = undefined -- Unexpressible atm.
     body    = do
+        docLang "READ_HEAD_W8 consumes any whitespace present before"
+        docLang "the term pushes the first encountered non-ws char."
+        x86 $ callLabel "READ_HEAD_W8"
 
-        docLang "READ_PRNT_CHAR consumes any whitespace present before"
-        docLang "the term and returns on the stack the first non-ws char"
-        docLang "encountered."
-        x86 $ callLabel "READ_PRNT_CHAR"
-
-        -- x86 $ writeMsgHelper "READ_PRNT_CHAR called, it returned:\n"
+        -- x86 $ writeMsgHelper "READ_HEAD_W8 called, it returned:\n"
         -- x86 $ callLabel "DBG_DUMP_PTOP_64"
-        assertPtop 1 "READ_PRNT_CHAR failed\n"
+        assertPtop 1 "READ_HEAD_W8 failed\n"
         pdrop 1
 
         -- x86 $ writeMsgHelper "This is what it read:\n"
@@ -852,70 +860,39 @@ defineTermReadLinux = defFunBasic funName ty body
 
         docLang "Reads characters until a space or a control "
         docLang "char is read."
-        docLang "It pushes on the stack an array of w8s then it pushes a"
-        docLang "w64 indicating how many chars have been read,"
-        docLang "followed by a w64 indicating success or failure."
-        docLang "r15 counts the chars that are successfully read."
-        x86 $ xor r15 r15
-        x86 $ inc r15 -- If we've reached this point we have read 1 char.
 
-        do  x86 $ asm $ setLabel "TERM_READ_WHILE"
-            docLang "Use the linux_sys_read system call:"
-            x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-            docLang "Allocate 8 bytes on the param stack:"
-            ppush $ I8 0x00
-
-            docLang "Where to write? To the top of the param stack:"
-            x86 $ mov rcx rsi
-            x86 $ int
-
-            x86 $ cmp rax $ I32 0x00
-            x86 $ je "TERM_READ_ERROR"
-
-            docLang "Probe the char we just read if it's a space or ctrl "
-            docLang "break the loop:"
-            x86 $ xor rax rax
-            ptopW8 al
-            x86 $ cmp rax $ I32 0x20 -- Space
-            x86 $ jleNear "TERM_READ_BREAK"
-            x86 $ cmp rax $ I32 0x7F -- ESC
-            x86 $ jeNear "TERM_READ_BREAK"
-            
-            x86 $ inc r15
-
-            docLang  "Repeat the operation"
-            x86 $ jmpLabel "TERM_READ_WHILE"
-
-        x86 $ asm $ setLabel "TERM_READ_BREAK"
-        ppopW8 al     -- Free the stack from the last allocation
-        ppush $ r15   -- Num of chars read
-        ppush $ I32 1 -- Success
-        x86 $ ret
-
-        x86 $ asm $ setLabel "TERM_READ_ERROR"
-        ppopW8 al     -- Free the stack from the last allocation
-        ppush $ r15   -- Num of chars read
-        ppush $ I32 0 -- Error
-        x86 $ ret
+        docLang "Increment the number of characters reutnred by "
+        docLang "READ_TAIL_W8 to account for the extra char on "
+        docLang "the pstack placed by READ_HEAD_W8 above."
+        x86 $ callLabel "READ_TAIL_W8"
+        ppop rax
+        ppop rbx
+        x86 $ inc rbx
+        ppush rbx
+        ppush rax
 
 -- Parses input. Skips whitespace, control characters, etc. 
 -- Stops at the first non-such char and pushes it on the stack.
--- Type : -> :w8:w64
+-- Type : -> :w8        :w64
 -- Func : -> :read_char:success
-defineRdPrntChr :: Lang ()
-defineRdPrntChr = defFunBasic funName undefined body
+defineRdHeadW8 :: Lang ()
+defineRdHeadW8 = defFunBasic funName undefined body
   where
-    funName = "READ_PRNT_CHAR"
+    funName = "READ_HEAD_W8"
     body = do
-        docLang "Allocate 1 byte on the param stack to read our"
-        docLang "first non-whitespace character:"
+        docLang "Allocate 1 byte on the parameter-stack in which our"
+        docLang "first non-whitespace character is placed:"
         ppush $ I8 0x00
 
         x86 $ asm $ setLabel "RPC_WHILE"
-        x86 $ mov rdx $ I64 0x01 -- Read 1 char
-        x86 $ xor rbx rbx        -- From stdin
+        docLang "Please read"
         x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-        x86 $ mov rcx rsi        -- Into the pstack
+        docLang "1 char"
+        x86 $ mov rdx $ I64 0x01 
+        docLang "From stdin"
+        x86 $ xor rbx rbx
+        docLang "Into the pstack"
+        x86 $ mov rcx rsi
         x86 $ int
 
         x86 $ cmp rax $ I32 0x00
@@ -924,7 +901,6 @@ defineRdPrntChr = defFunBasic funName undefined body
         x86 $ xor rax rax
         ptopW8 al
 
-        -- TODO: Jump if less than or equal to 0x20 (skip ALL ctrl chars)
         x86 $ cmp rax $ I32 0x20 
         x86 $ jleNear "RPC_WHILE" -- Space or Control character, skip
         x86 $ cmp rax $ I32 0x7F
@@ -935,6 +911,72 @@ defineRdPrntChr = defFunBasic funName undefined body
 
         x86 $ asm $ setLabel "RPC_ERROR"
         ppush $ I32 0 -- Fail
+
+defineRdTailW8 :: Lang ()
+defineRdTailW8 = defFunBasic funName ty body
+  where
+    funName = "READ_TAIL_W8"
+    ty = undefined
+    body = do
+        docLang "READ_TAIL_W8 reads characters until a non-printable"
+        docLang "character is encountered."
+        docLang "It pushes on the stack an array of w8s then it pushes a"
+        docLang "w64 indicating how many chars have been read,"
+        docLang "followed by a w64 indicating success or failure."
+        docLang "r15 counts the chars that are successfully read."
+        x86 $ xor r15 r15
+        x86 $ asm $ setLabel "READ_TAIL_WHILE"
+
+        docLang "Allocate 1 byte on the stack to read into"
+        ppush $ I8 0x00
+        docLang "Please read"
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
+        docLang "1 char"
+        x86 $ mov rdx $ I64 0x01 
+        docLang "From stdin"
+        x86 $ xor rbx rbx
+        docLang "Into the pstack"
+        x86 $ mov rcx rsi
+        x86 $ int
+
+        x86 $ cmp rax $ I32 0x00
+        x86 $ je "READ_TAIL_W8_ERROR"
+       
+        
+        docLang "Place the char we've just read into rax"
+        x86 $ xor rax rax
+        ptopW8 al
+
+        docLang "Probe the char we just read if it's non-printable "
+        docLang "then break the loop:"
+        x86 $ cmp rax $ I32 0x20 -- Space or less, skip
+        x86 $ jleNear "READ_TAIL_W8_BREAK" 
+        x86 $ cmp rax $ I32 0x7F -- ESC
+        x86 $ jeNear  "READ_TAIL_W8_BREAK"
+
+        x86 $ inc r15
+        
+        docLang "Repeat"
+        x86 $ jmpLabel "READ_TAIL_WHILE"
+
+        x86 $ asm $ setLabel "READ_TAIL_W8_BREAK"
+        docLang "Free the stack from the last allocation:"
+        ppopW8 al
+        docLang "Number of chars read:"
+        ppush $ r15
+        docLang "Success:"
+        ppush $ I32 1
+        x86 $ ret
+
+        x86 $ asm $ setLabel "READ_TAIL_W8_ERROR"
+        docLang "Free the stack from the last allocation:"
+        ppopW8 al
+        docLang "Number of chars read:"
+        ppush $ r15
+        docLang "Error:"
+        ppush $ I32 0
+        x86 $ ret
+       
 
 -- Takes 1 parameter and adds input from stdin
 -- on the parameters stack as well as the result.
@@ -1156,6 +1198,7 @@ testSEQDefinitions = do
         asm $ bflush
 -}
 
+{-
 defineEval :: Lang ()
 defineEval = do
     x86 $ asm $ setLabel "EVAL"
@@ -1268,6 +1311,7 @@ defineEval = do
 
     x86 $ asm $ setLabel "EVAL_STOP"
     x86 $ ret 
+-}
 
 -- Type:      :w64:w64 -> w64
 -- Operation: :a  :b   -> a (x) b
