@@ -333,6 +333,10 @@ callLabel label = do
     asm $ emitLabelOff32 label
     asm $ bflush
 
+jne :: String -> X86_64()
+jne label = do
+    docX86 $ "jne " ++ label
+
 je :: String -> X86_64()
 -- Jump short if ZF=1. (i.e. If equal) 
 -- Offset is a signed offset relative to the current program position.

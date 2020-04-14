@@ -82,6 +82,7 @@ defineBaseDefBodies = do
     defineDbgDumpPtop64
     defineREPL
     defineREPLDef
+    defineREPLDefInt
 
     definePush1 -- Dummy test function that just pushes constant 1
     definePushK -- Dummy test function that just pushes constant 'K'
@@ -113,12 +114,22 @@ pushSimpleDef defName = do
     x86 $ mov r11 rsi
 
 writeMsgHelper msg = do
-            mov rax $ I64 $ fromIntegral $ linux_sys_write
-            mov rbx $ I64 $ fromIntegral $ linux_stderr
-            mov rdx (I64 $ fromIntegral $ length msg) 
-            asm $ addString msg
-            mov rcx (S64 msg)
-            int
+    docLang $ "Write message: " ++ msg
+    ppush rax
+    ppush rbx
+    ppush rcx
+    ppush rdx
+    x86 $ do
+        mov rax $ I64 $ fromIntegral $ linux_sys_write
+        mov rbx $ I64 $ fromIntegral $ linux_stderr
+        mov rdx (I64 $ fromIntegral $ length msg) 
+        asm $ addString msg
+        mov rcx (S64 msg)
+        int
+    ppop rdx
+    ppop rcx
+    ppop rbx
+    ppop rax
 
 pushBaseDict = do
     docLang "Simple Dictionary of cells [ prev ][ name ][ addr ]"
@@ -154,6 +165,7 @@ pushBaseDict = do
 -- of a (k, prev) := body address
 -- When interpreting an expression, we use the dictionary entries to find
 -- the definitions of terms in the expression.
+{-
 pushInitialDictionary = do
     docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
     x86 $ mov r11 $ I64 0
@@ -230,7 +242,9 @@ pushInitialDictionary = do
             run "DBG_DUMP_PTOP_64",
             run "EXIT"
         ]
+-}
 
+{-
 appendSEQDefinition :: Maybe String -> String -> X86_64 String
 appendSEQDefinition prevLabel bodyLabel = do
     docX86 $ "Dictionary entry for " ++ bodyLabel
@@ -254,6 +268,7 @@ appendSEQDefinition prevLabel bodyLabel = do
     asm $ emitString bodyLabel
     asm $ bflush
     return x
+-}
 
 -- This is a sort of struct of C...
 appendASMDefinition :: Maybe String -> String -> X86_64 String
@@ -533,6 +548,29 @@ defineLIT = defFunBasic funName ty body
         ppush rax
         x86 $ ret
 
+-- Type: w8 :w8 :..:w8   :w64 -> w64                                       :w64
+-- Func: sgn:w_0:..:w_n-1:n   -> sgn*(w_n-1 + w_n-2*10 + ... w_0*10^n-1):success
+-- Convert an integer string to an integer.
+defineREPLDefInt :: Lang () 
+defineREPLDefInt = defFunBasic "REPL_DEF_INT" undefined body
+  where
+    body = do
+        docLang "Parse an integer that's part of the REPL definition."
+        ppop rax -- The length of the string. 
+        
+        x86 $ asm $ setLabel "REPL_DEF_INT_LOOP"
+
+        x86 $ cmp rax $ I32 0
+        x86 $ jeNear "REPL_DEF_INT_END"
+        ppopW8 dl -- Drop the 8-bit word from the pstack.
+        x86 $ dec rax
+        x86 $ jeNear "REPL_DEF_INT_LOOP"
+
+        x86 $ asm $ setLabel "REPL_DEF_INT_END"
+
+        ppush $ I32 1
+        x86 $ ret
+
 defineREPLDef :: Lang ()
 defineREPLDef = defFunBasic "REPL_DEF" undefined body
   where
@@ -542,7 +580,7 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         docLang "It is not callable directly from the dictionary, it's "
         docLang "only called from REPL."
 
-        docLang "Read and hash the term:"
+        docLang "Read and hash the term being defined:"
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Could not read the term to define!\n"
         pdrop 1
@@ -555,12 +593,12 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ xor rax rax
         ppopW8 al -- The char returned by READ_HEAD_W8
-        docLang "The ascii code for equal '=' is 0x3D"
+        docLang "The ascii code for '=' is 0x3D"
         x86 $ mov rbx $ I64 $ 0x3D
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_DEF_READ_TERMS"
         docLang "We have not read the equal sign. Return"
-        x86 $ writeMsgHelper "Error: expecting an '=' character after the term.\n"
+        writeMsgHelper "Error: expecting an '=' character after the term.\n"
         x86 $ ret
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS"
 
@@ -568,7 +606,7 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         docLang "Build our [ prev ][ name hash ][ addr ] record on the stack"
         docLang "for the new dictionary entry..."
         docLang "Unfortunately this assumes that the operation will"
-        docLang "succeed. TODO: roll back "
+        docLang "succeed. FIXME: roll back "
         docLang "the entire operation if the definition is in some way"
         docLang "defectuous!"
         ppush r9  -- addr
@@ -578,16 +616,56 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP"
 
-        docLang "First, read a character."
-        docLang "(TODO) If the first char is 0-9, parse a decimal integer."
-        docLang "(TODO) If the first char is \", go into string parsing mode."
-        docLang "Otherwise, read the rest of the characters and look up the "
-        docLang "term in the dictionary!"
+        writeMsgHelper "REPL_DEF_READ_TERMS_LOOP LOOP \n"
 
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Failed to parse term within definition body\n"
         pdrop 1
 
+        docLang "(TODO) If the first char is \", go into string parsing mode."
+        docLang "Otherwise, read the rest of the characters and look up the "
+        docLang "term in the dictionary!"
+
+        docLang "Patern match on the first character in the input."
+        docLang "Retrieve the first character by peering down the stack."
+
+        ppop rbx  -- Pop the term length from the stack
+        x86 $ xor rdx rdx
+        ppopW8 dl -- Top of the stack W8
+        ppush rbx -- Put back the length
+
+        -- FIXME: RDX has the LAST character in the string!
+        -- But what we actually need is the FIRST character!
+        -- I suppose we could save the top of the stack before 
+        -- the READ_PRINTABLES_W8 call.
+
+        ppush rdx 
+        x86 $ callLabel "DBG_DUMP_PTOP_64"
+        ppop rdx
+        
+        docLang "Is the RDX char greater than ascii code 9?"
+        x86 $ cmp rdx $ I32 0x39
+        x86 $ jgNear "REPL_DEF_NOT_NUMERIC"
+
+        docLang "Is the RDX char less than ascii code 0?"
+        x86 $ cmp rdx $ I32 0x30 
+        x86 $ jlNear "REPL_DEF_NOT_NUMERIC"
+
+        docLang "Our term starts with 0-9."
+        docLang "Attempt to parse a Positive/Negative Integer Literal."
+        -- PARSE A POSITIVE/NEGATIVE INTEGER LITERAL!
+
+        x86 $ callLabel "REPL_DEF_INT"
+        assertPtop 1 "REPL_DEF_INT was not successful!"
+
+        -- TODO: EMIT_LIT_64
+        x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
+
+        -- rdx now contains the first character of the string.
+        x86 $ asm $ setLabel "REPL_DEF_NOT_NUMERIC"
+
+        -- TODO: Refactor: move this into REPL_DEF_REFERENCE (A reference to 
+        -- another term in the dictionary).
         x86 $ callLabel "TERM_LOOK"
         ppop rax
         -- If we have read an unknown term, end the loop.
@@ -607,7 +685,7 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP_END"
 
         x86 $ callLabel "EMIT_RET"
-        x86 $ writeMsgHelper "Definition added.\n"
+        writeMsgHelper "Definition added.\n"
         x86 $ ret
 
 defineREPL :: Lang ()
@@ -641,7 +719,7 @@ defineREPL = defFunBasic "REPL" undefined body
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_QUIT"
         
-        x86 $ writeMsgHelper "Unknown command! (expected: def/run/q)\n"
+        writeMsgHelper "Unknown command! (expected: def/run/q)\n"
         x86 $ jmpLabel "REPL_START"
 
         x86 $ asm $ setLabel "REPL_DEF_CALL"
@@ -663,13 +741,13 @@ defineREPL = defFunBasic "REPL" undefined body
         x86 $ mov rax (derefOffset rax 16)
         x86 $ call rax
 
-        x86 $ writeMsgHelper "Run term done.\n"
+        writeMsgHelper "Run term done.\n"
         x86 $ jmpLabel "REPL_START"
 
         x86 $ asm $ setLabel "REPL_RUN_UNDEFINED"
         assertPtop 0 "TERM_LOOK failed so the result should be 0."
         pdrop 1 -- Drop the 0 From TERM_LOOK
-        x86 $ writeMsgHelper "Undefined term!\n"
+        writeMsgHelper "Undefined term!\n"
         x86 $ jmpLabel "REPL_START"
          
 
@@ -847,7 +925,7 @@ defineTermReadLinux = defFunBasic funName ty body
     ty      = undefined -- Unexpressible atm.
     body    = do
         docLang "READ_HEAD_W8 consumes any whitespace present before"
-        docLang "the term pushes the first encountered non-ws char."
+        docLang "the term and it pushes the first encountered non-ws char."
         x86 $ callLabel "READ_HEAD_W8"
 
         -- x86 $ writeMsgHelper "READ_HEAD_W8 called, it returned:\n"
@@ -859,14 +937,14 @@ defineTermReadLinux = defFunBasic funName ty body
         -- x86 $ callLabel "DBG_DUMP_PTOP_64"
 
         docLang "Reads characters until a space or a control "
-        docLang "char is read."
+        docLang "char (non-printable) is read."
+        x86 $ callLabel "READ_TAIL_W8"
+        ppop rax
+        ppop rbx
 
         docLang "Increment the number of characters reutnred by "
         docLang "READ_TAIL_W8 to account for the extra char on "
         docLang "the pstack placed by READ_HEAD_W8 above."
-        x86 $ callLabel "READ_TAIL_W8"
-        ppop rax
-        ppop rbx
         x86 $ inc rbx
         ppush rbx
         ppush rax
@@ -942,7 +1020,6 @@ defineRdTailW8 = defFunBasic funName ty body
         x86 $ cmp rax $ I32 0x00
         x86 $ je "READ_TAIL_W8_ERROR"
        
-        
         docLang "Place the char we've just read into rax"
         x86 $ xor rax rax
         ptopW8 al
@@ -1371,6 +1448,7 @@ pdropW8 numW8s =
 -- Parameter stack pop
 ppop :: Val -> Lang ()
 ppop dst64@(R64 _) = do
+    docLang $ "ppop " ++ show dst64
     x86 $ mov dst64 $ derefOffset rsi 0
     x86 $ add rsi $ I32 8
 

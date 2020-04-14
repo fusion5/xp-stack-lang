@@ -49,7 +49,7 @@ initParamStack = do
     int
     -- FIXME: If the heap alloc didn't work then this 
     -- should throw a segmentation fault.
-    docX86 "The parameter stack grows from large to smal, "
+    docX86 "The parameter stack grows from large to small, "
     docX86 "similar to the call stack. Therefore we start from "
     docX86 "the highest possible address."
     add rsi (I32 10000) 
