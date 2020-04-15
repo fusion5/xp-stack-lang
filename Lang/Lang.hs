@@ -550,36 +550,63 @@ defineLIT = defFunBasic funName ty body
         ppush rax
         x86 $ ret
 
--- Type: w8 :w8 :..:w8   :w64 -> w64                                       :w64
--- Func: sgn:w_0:..:w_n-1:n   -> sgn*(w_n-1 + w_n-2*10 + ... w_0*10^n-1):success
--- Convert an integer string to an integer.
+-- Type: :w8 :..:w8   :w64 -> w64                                :w64
+-- Func: :w_0:..:w_n-1:n   -> (w_n-1 + w_n-2*10 + ... w_0*10^n-1):success
+-- Convert a base 10 integer string to an integer.
 defineREPLDefInt :: Lang () 
-defineREPLDefInt = defFunBasic "REPL_DEF_INT" undefined body
+defineREPLDefInt = defFunBasic "REPL_DEF_PARSEINT" undefined body
   where
     body = do
-        doc "Parse an integer that's part of the REPL definition."
+        doc "Parse an integer that is part of the REPL definition."
+
+        ppop rbx -- Remaining string characters
+        x86 $ mov rcx $ I64 1  -- A number of form 10^k
+        x86 $ xor r10 r10      -- Where we keep the sum
         
-        writeMsgHelper "String length:\n"
+        setLabel "REPL_DEF_INT_LOOP"
 
-        ppop rax -- The length of the string.
-        
-        x86 $ asm $ setLabel "REPL_DEF_INT_LOOP"
-
-        x86 $ cmp rax $ I32 0
-
+        x86 $ cmp rbx $ I32 0
         x86 $ jeNear "REPL_DEF_INT_END"
-        writeMsgHelper "REPL_DEF_INT STEP\n"
-        x86 $ callLabel "DBG_DUMP_PTOP_8"
 
-        x86 $ xor rdx rdx
-        ppopW8 dl -- Drop the 8-bit word from the pstack.
-        x86 $ dec rax
+        -- Warning: DBG_DUMP_PTOP_8 messes up used registers!
+        -- x86 $ callLabel "DBG_DUMP_PTOP_8"
 
+        x86 $ xor rax rax
+        ppopW8 al                -- Drop the 8-bit word from the pstack.
+
+        x86 $ sub rax $ I32 0x30 -- Convert from ascii to a base10 number
+        x86 $ joNear "REPL_DEF_INT_ERROR"
+
+        x86 $ cmp rax $ I32 0x39 -- Compare to ascii digit 9.
+        x86 $ jgNear "REPL_DEF_INT_ERROR"
+
+        -- Multiply rax by the current power of 10.
+        x86 $ mul rcx
+        x86 $ joNear "REPL_DEF_INT_ERROR"
+
+        -- Add rax to the accumulator
+        x86 $ add r10 rax
+        x86 $ joNear "REPL_DEF_INT_ERROR"
+
+        x86 $ dec rbx -- Decrease the remaining chars counter.
+
+        -- Multiply rcx by 10
+        x86 $ mov rdx $ I64 10 -- Constant (base power)
+        x86 $ mov rax rcx
+        x86 $ mul rdx
+        x86 $ joNear "REPL_DEF_INT_ERROR"
+        x86 $ mov rcx rax
+    
         x86 $ jmpLabel "REPL_DEF_INT_LOOP"
 
-        x86 $ asm $ setLabel "REPL_DEF_INT_END"
-
+        setLabel "REPL_DEF_INT_END"
+        ppush r10
         ppush $ I32 1
+        x86 $ ret
+
+        setLabel "REPL_DEF_INT_ERROR"
+        ppush r10
+        ppush $ I32 0
         x86 $ ret
 
 defineREPLDef :: Lang ()
@@ -627,8 +654,6 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP"
 
-        writeMsgHelper "REPL_DEF_READ_TERMS_LOOP LOOP \n"
-
         {-
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Failed to parse term within definition body\n"
@@ -641,14 +666,11 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         doc "Patern match on the stack top (READ HEAD W8)."
 
+        -- TODO: If the character is a dot, then end the definition.
+
         x86 $ xor rdx rdx
         ppeerW8 0 dl -- Top of the stack W8
 
-        ppush rdx 
-        writeMsgHelper  "First character HEX code:\n"
-        x86 $ callLabel "DBG_DUMP_PTOP_64"
-        ppop rdx
-        
         doc "Is the RDX char greater than ascii code 9?"
         x86 $ cmp rdx $ I32 0x39
         x86 $ jgNear "REPL_DEF_NOT_NUMERIC"
@@ -669,8 +691,14 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         x86 $ inc rbx
         ppush rbx
 
-        x86 $ callLabel "REPL_DEF_INT"
-        assertPtop 1 "REPL_DEF_INT was not successful!"
+        x86 $ callLabel "REPL_DEF_PARSEINT"
+        -- TODO: Keep on parsing, don't quit the program (roll back 
+        -- the definition)
+        assertPtop 1 "Integer error - overflow or invalid characters!\n"
+        pdrop 1
+
+        -- Emit the JIT literal that was just entered.
+        x86 $ callLabel "EMIT_LIT_64"
 
         x86 $ jmpLabel "REPL_DEF_READ_TERMS_LOOP"
 

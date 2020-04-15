@@ -356,6 +356,8 @@ jgeNear = jNear 0x8D
 jlNear  = jNear 0x8C
 jleNear = jNear 0x8E
 jneNear = jNear 0x85 
+joNear  = jNear 0x80 -- Jump on overflow
+jnoNear = jNear 0x81 -- Jump on not overflow
 
 jl :: String -> X86_64()
 jl label = do
@@ -448,7 +450,8 @@ jmpLabel label = do
     asm $ emitLabelOff32 label
     asm $ bflush
 
--- Multiply value in RAX by value from register passed
+-- Multiply value in RAX by value from register passed; stores
+-- the result in RDX:RAX!
 mul :: Val -> X86_64 ()
 mul r@(R64 factor) = do
     rex_w Nothing (Just factor)
