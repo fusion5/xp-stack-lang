@@ -1,3 +1,7 @@
+{-# Language TypeSynonymInstances #-}
+{-# Language FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module ASM.Datatypes where
 
 import Data.Word
@@ -58,10 +62,13 @@ lenBytes (SRelOffsetToLabel8  _ _) = 1
 lenBytes (SProgSize64) = 8
 lenBytes (SStrRef64 _) = 8
 
-type ASM a = StateT ASMState (Except String) a
+type ASM = StateT ASMState (Except String)
 
 class Documentation m where
-    doc :: String -> m
+    doc :: String -> m ()
+
+class Labelable m where
+    setLabel :: String -> m ()
 
 data ASMState = ASMState
     { asm_instr    :: S.Seq ASMCode -- Sequence of opcodes, labels and docs

@@ -38,11 +38,12 @@ fnv1 = foldr (fnvFold False) fnvOffsetBasis
 fnv1s :: String -> Word64
 fnv1s = fnv1 . map ascii
 
-instance Documentation (Lang ()) where
+instance Documentation Lang where
     doc = x86 . doc
 
-docLang :: String -> Lang ()
-docLang = doc
+callBody :: String -> Lang () 
+callBody l = do
+    x86 $ callLabel l
 
 defineBaseDefBodies = do
     definePDrop
@@ -80,6 +81,7 @@ defineBaseDefBodies = do
     defineIFPOP0
     defineIFPEEK0
     defineDbgDumpPtop64
+    defineDbgDumpPtop8
     defineREPL
     defineREPLDef
     defineREPLDefInt
@@ -102,19 +104,19 @@ data Dict =
 
 pushSimpleDef :: String -> Lang ()
 pushSimpleDef defName = do
-    docLang $ "ASM Dictionary entry for " ++ defName
-    docLang "ASM or term sequence address in memory:"
+    doc $ "ASM Dictionary entry for " ++ defName
+    doc "ASM or term sequence address in memory:"
     x86 $ mov rax $ L64 defName
     ppush rax
-    docLang "Definition name hash (for easy search):"
+    doc "Definition name hash (for easy search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii defName
     ppush rax
-    docLang "Previous entry pointer:"
+    doc "Previous entry pointer:"
     ppush r11
     x86 $ mov r11 rsi
 
 writeMsgHelper msg = do
-    docLang $ "Write message: " ++ msg
+    doc $ "Write message: " ++ msg
     ppush rax
     ppush rbx
     ppush rcx
@@ -132,7 +134,7 @@ writeMsgHelper msg = do
     ppop rax
 
 pushBaseDict = do
-    docLang "Simple Dictionary of cells [ prev ][ name ][ addr ]"
+    doc "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     x86 $ mov r11 $ I64 0
     pushSimpleDef "NOT"
     pushSimpleDef "PDROP"
@@ -157,7 +159,7 @@ pushBaseDict = do
     pushSimpleDef "TERM_LOOK"
     pushSimpleDef "TERM_HASH"
     pushSimpleDef "REPL"
-    docLang "Dictionary end marking point (LOOKUP ends here)"
+    doc "Dictionary end marking point (LOOKUP ends here)"
     ppushI32 0
 
 -- Bootstrap a kind of Forth interpreter dictionary.
@@ -167,7 +169,7 @@ pushBaseDict = do
 -- the definitions of terms in the expression.
 {-
 pushInitialDictionary = do
-    docLang "Initialize r11, the dictionary pointer, as the empty dictionary:"
+    doc "Initialize r11, the dictionary pointer, as the empty dictionary:"
     x86 $ mov r11 $ I64 0
     pushASMDef "NOT"
     pushASMDef "PDROP"
@@ -302,38 +304,38 @@ appendASMDefinition prevLabel bodyLabel = do
 
 pushASMDef :: String -> Lang ()
 pushASMDef bodyLabel = do
-    docLang $ "ASM Dictionary entry for " ++ bodyLabel
+    doc $ "ASM Dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     -- x86 $ asm $ setLabel x
-    -- docLang "Label:"
+    -- doc "Label:"
     -- mapM ppush $ map (I8 . ascii) bodyLabel
-    -- docLang "Label length:"
+    -- doc "Label length:"
     -- ppush $ I32 $ fromIntegral $ length bodyLabel
-    docLang "ASM or term sequence address in memory:"
+    doc "ASM or term sequence address in memory:"
     x86 $ mov rax $ L64 bodyLabel
     ppush rax
-    docLang "Type (0 means it's an ASM-based definition):"
+    doc "Type (0 means it's an ASM-based definition):"
     ppush $ I32 0
-    docLang "Unused (for alignment purposes with SEQ definitions)"
+    doc "Unused (for alignment purposes with SEQ definitions)"
     ppush $ I32 0
-    docLang "Hash (for easy search):"
+    doc "Hash (for easy search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
     ppush rax
-    docLang "Previous entry pointer:"
+    doc "Previous entry pointer:"
     ppush r11
-    docLang "Set the dictionary pointer as the top of the stack, since"
-    docLang "the stack now holds a dictionary definition which will"
-    docLang "remain there."
-    docLang "It should be an invariant that the parameter stack top,"
-    docLang "rsi is always >= r11."
+    doc "Set the dictionary pointer as the top of the stack, since"
+    doc "the stack now holds a dictionary definition which will"
+    doc "remain there."
+    doc "It should be an invariant that the parameter stack top,"
+    doc "rsi is always >= r11."
     x86 $ mov r11 rsi
 
 pushSeqItem :: [SeqParam] -> SeqInstr -> Lang ()
 pushSeqItem _  (SeqDefTerm term) = do
-    docLang "Push the term to look up"
+    doc "Push the term to look up"
     mapM ppush $ map (I8 . ascii) term
     ppush $ I32 $ fromIntegral $ length term
-    docLang "Look it up"
+    doc "Look it up"
     x86 $ callLabel "TERM_LOOK"
     -- Commented for debug purposes (more compact code)
     -- assertPtop 1 "Undefined dictionary reference"
@@ -342,17 +344,17 @@ pushSeqItem _ (SeqDefLit64 n) = do
     -- As usual, things on the stack go on reverse.
     -- First we add the literal value that we wish to push on
     -- the stack.
-    docLang "Build a LIT function call. The literal comes first"
-    docLang "on the stack in the call sequence."
+    doc "Build a LIT function call. The literal comes first"
+    doc "on the stack in the call sequence."
     x86 $ mov rax $ I64 n
     ppush $ rax
-    docLang "Then follows the LIT call."
+    doc "Then follows the LIT call."
     pushSeqItem [] (SeqDefTerm "LIT")
 pushSeqItem params (SeqDefParam term) = do
-    docLang "A parameter reference: a function needs to peer down "
-    docLang "the parameter stack and push onto pstack. Here we " 
-    docLang "compute the offset and the length that needs to be pushed "
-    docLang "on the stack."
+    doc "A parameter reference: a function needs to peer down "
+    doc "the parameter stack and push onto pstack. Here we " 
+    doc "compute the offset and the length that needs to be pushed "
+    doc "on the stack."
     case lookup term paramOffsets of
         Nothing     -> x86 $ asm $ throwError $ 
             "Undefined parameter reference: " ++ term
@@ -387,41 +389,41 @@ pushSEQDef bodyLabel params calls = do
     -- TODO: Resolve the dictionary pointers of the parameters
     -- in 'calls' and emit them on the stack as well. 
     -- Then have the def.addr point to -- this stack sequence.
-    docLang $ "SEQ body definition for " ++ bodyLabel
-    docLang "With stacks we have to do everything backwards."
-    docLang "Push a 0 to indicate the termination of the sequence! (Essential)"
-    docLang "Then push the call sequence in reverse order."
+    doc $ "SEQ body definition for " ++ bodyLabel
+    doc "With stacks we have to do everything backwards."
+    doc "Push a 0 to indicate the termination of the sequence! (Essential)"
+    doc "Then push the call sequence in reverse order."
     ppush $ I32 0
     -- Reverse bc. the stack grows opposite to addresses
     mapM (pushSeqItem params) $ reverse calls
-    docLang $ "SEQ dictionary entry for " ++ bodyLabel
+    doc $ "SEQ dictionary entry for " ++ bodyLabel
     -- x <- freshLabelWithPrefix $ "DICT_ENTRY_" ++ bodyLabel ++ "_"
     -- let x = "DICT_" ++ bodyLabel
     -- x86 $ asm $ setLabel x
-    -- docLang $ "Label:"
+    -- doc $ "Label:"
     -- mapM ppush $ map (I8 . ascii) bodyLabel
-    -- docLang $ "Label length:"
+    -- doc $ "Label length:"
     -- ppush $ I32 $ fromIntegral $ length bodyLabel
 
     -- TODO: Since this is always the previous address on the stack, we 
     -- could just drop this parameter from SEQ definitions and have the
     -- sequence words follow immediately...
     --
-    docLang "Cache rsi into rbx to avoid ppush function from interfering"
+    doc "Cache rsi into rbx to avoid ppush function from interfering"
     x86 $ mov rbx rsi
-    docLang $ "Term sequence memory address (it's the stack top because we "
-    docLang $ "just pushed it on the stack):"
+    doc $ "Term sequence memory address (it's the stack top because we "
+    doc $ "just pushed it on the stack):"
     ppush rbx
-    docLang "Add the length of the parameters on the stack (just it for now)"
+    doc "Add the length of the parameters on the stack (just it for now)"
     ppush $ I32 $ sum $ map (sizeof . snd) params
-    docLang $ "Type (1 means it's an SEQ-based definition):"
+    doc $ "Type (1 means it's an SEQ-based definition):"
     ppush $ I32 1
-    docLang $ "Hash (for easier search):"
+    doc $ "Hash (for easier search):"
     x86 $ mov rax $ I64 $ fnv1 $ map ascii bodyLabel
     ppush rax
-    docLang $ "Previous entry pointer:"
+    doc $ "Previous entry pointer:"
     ppush r11
-    docLang $ "Advance the dictionary:"
+    doc $ "Advance the dictionary:"
     x86 $ mov r11 rsi
 
 defineDUP :: Lang () 
@@ -430,7 +432,7 @@ defineDUP = defFunBasic funName ty body
     funName = "DUP"
     ty      = undefined
     body    = do
-        docLang "Duplicate the top item on the stack."
+        doc "Duplicate the top item on the stack."
         ppeek rax
         ppush rax
         x86 $ ret
@@ -441,8 +443,8 @@ defineNOT = defFunBasic funName ty body
     funName = "NOT"
     ty      = undefined
     body    = do
-        docLang "If the top of the stack is 0, replace with 1. "
-        docLang "Otherwise replace with 0."
+        doc "If the top of the stack is 0, replace with 1. "
+        doc "Otherwise replace with 0."
         ppop rax
         x86 $ cmp rax $ I32 0
         x86 $ jeNear "NOT_PUSH_0"
@@ -461,13 +463,13 @@ defineTermLook = defFunBasic funName ty body
     funName = "TERM_LOOK"
     ty      = undefined
     body    = do
-        docLang "Lookup a term in the dictionary."
-        docLang "Compute the term hash."
+        doc "Lookup a term in the dictionary."
+        doc "Compute the term hash."
         x86 $ callLabel "TERM_HASH"
-        docLang "Traverse the dictionary using rax until we find"
-        docLang "either the emtpy dictionary or the term."
-        docLang ""
-        docLang "rax now holds the hash we're looking for."
+        doc "Traverse the dictionary using rax until we find"
+        doc "either the emtpy dictionary or the term."
+        doc ""
+        doc "rax now holds the hash we're looking for."
         ppop rax 
         x86 $ mov rbx r11 -- Begin from the dictionary top.
         x86 $ asm $ setLabel "TERM_LOOK_WHILE"
@@ -475,23 +477,23 @@ defineTermLook = defFunBasic funName ty body
             x86 $ cmp rbx $ I32 0
             x86 $ jeNear "TERM_LOOK_NOT_FOUND"
 
-            docLang "Take the current dictionary entry hash: def.hash"
+            doc "Take the current dictionary entry hash: def.hash"
             x86 $ mov rcx (derefOffset rbx 8)
             x86 $ cmp rcx rax
             x86 $ jeNear "TERM_LOOK_FOUND"
             
-            docLang "Advance the dictionary to the following item (def.prev)"
+            doc "Advance the dictionary to the following item (def.prev)"
             x86 $ mov rbx (derefOffset rbx 0) 
 
             x86 $ jmpLabel "TERM_LOOK_WHILE"
         x86 $ asm $ setLabel "TERM_LOOK_FOUND"
-        docLang "Found! Return the matching dictionary address"
+        doc "Found! Return the matching dictionary address"
         ppush rbx 
         ppush $ I32 1
         x86 $ ret
 
         x86 $ asm $ setLabel "TERM_LOOK_NOT_FOUND"
-        docLang "Not found! indicate that there is an error."
+        doc "Not found! indicate that there is an error."
         ppush $ I32 0
         ppush $ I32 0
         x86 $ ret
@@ -503,14 +505,14 @@ defineIFPEEK0 = defFunBasic funName ty body
     ty = undefined
     body = do
         -- Like if POP0 but it doesn't pop.
-        docLang "Only execute the next word (from register r8) if the top"
-        docLang "of the stack equals 0."
+        doc "Only execute the next word (from register r8) if the top"
+        doc "of the stack equals 0."
         ppeek rax
         x86 $ cmp  rax (I32 0)
         x86 $ je "IFPEEK0_EQUALS"
-        docLang "Skip the next word by adding 8 bytes to r8."
-        docLang "FIXME: What if the next word is out of the sequence"
-        docLang "under evaluation?"
+        doc "Skip the next word by adding 8 bytes to r8."
+        doc "FIXME: What if the next word is out of the sequence"
+        doc "under evaluation?"
         x86 $ add r8 (I32 8)
         x86 $ ret
         x86 $ asm $ setLabel "IFPEEK0_EQUALS"
@@ -522,14 +524,14 @@ defineIFPOP0 = defFunBasic funName ty body
     funName = "IFPOP0"
     ty = undefined
     body = do
-        docLang "Only execute the next word (from register r8) if the top"
-        docLang "of the stack equals 0."
+        doc "Only execute the next word (from register r8) if the top"
+        doc "of the stack equals 0."
         ppop rax
         x86 $ cmp  rax (I32 0)
         x86 $ je "IFPOP0_EQUALS"
-        docLang "Skip the next word by adding 8 bytes to r8."
-        docLang "FIXME: What if the next word is out of the sequence"
-        docLang "under evaluation?"
+        doc "Skip the next word by adding 8 bytes to r8."
+        doc "FIXME: What if the next word is out of the sequence"
+        doc "under evaluation?"
         x86 $ add r8 (I32 8)
         x86 $ ret
         x86 $ asm $ setLabel "IFPOP0_EQUALS"
@@ -541,8 +543,8 @@ defineLIT = defFunBasic funName ty body
     funName = "LIT"
     ty = undefined
     body = do
-        docLang "Push a literal value on the stack present on the next"
-        docLang "word (from register r8)."
+        doc "Push a literal value on the stack present on the next"
+        doc "word (from register r8)."
         x86 $ add r8  (I32 8)
         x86 $ mov rax (derefOffset r8 0)
         ppush rax
@@ -555,16 +557,25 @@ defineREPLDefInt :: Lang ()
 defineREPLDefInt = defFunBasic "REPL_DEF_INT" undefined body
   where
     body = do
-        docLang "Parse an integer that's part of the REPL definition."
-        ppop rax -- The length of the string. 
+        doc "Parse an integer that's part of the REPL definition."
+        
+        writeMsgHelper "String length:\n"
+
+        ppop rax -- The length of the string.
         
         x86 $ asm $ setLabel "REPL_DEF_INT_LOOP"
 
         x86 $ cmp rax $ I32 0
+
         x86 $ jeNear "REPL_DEF_INT_END"
+        writeMsgHelper "REPL_DEF_INT STEP\n"
+        x86 $ callLabel "DBG_DUMP_PTOP_8"
+
+        x86 $ xor rdx rdx
         ppopW8 dl -- Drop the 8-bit word from the pstack.
         x86 $ dec rax
-        x86 $ jeNear "REPL_DEF_INT_LOOP"
+
+        x86 $ jmpLabel "REPL_DEF_INT_LOOP"
 
         x86 $ asm $ setLabel "REPL_DEF_INT_END"
 
@@ -575,40 +586,40 @@ defineREPLDef :: Lang ()
 defineREPLDef = defFunBasic "REPL_DEF" undefined body
   where
     body = do
-        docLang "REPL Definition subfunction."
-        docLang "This is the REPL part that reads new definitions."
-        docLang "It is not callable directly from the dictionary, it's "
-        docLang "only called from REPL."
+        doc "REPL Definition subfunction."
+        doc "This is the REPL part that reads new definitions."
+        doc "It is not callable directly from the dictionary, it's "
+        doc "only called from REPL."
 
-        docLang "Read and hash the term being defined:"
+        doc "Read and hash the term being defined:"
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Could not read the term to define!\n"
         pdrop 1
         x86 $ callLabel "TERM_HASH"
 
-        docLang "Read a char, and ensure it is the equal sign:"
+        doc "Read a char, and ensure it is the equal sign:"
         x86 $ callLabel "READ_HEAD_W8"
         assertPtop 1 "Could not read a printable char!\n"
         pdrop 1
 
         x86 $ xor rax rax
         ppopW8 al -- The char returned by READ_HEAD_W8
-        docLang "The ascii code for '=' is 0x3D"
+        doc "The ascii code for '=' is 0x3D"
         x86 $ mov rbx $ I64 $ 0x3D
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_DEF_READ_TERMS"
-        docLang "We have not read the equal sign. Return"
+        doc "We have not read the equal sign. Return"
         writeMsgHelper "Error: expecting an '=' character after the term.\n"
         x86 $ ret
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS"
 
         ppop rax -- The hash of the term we're defining
-        docLang "Build our [ prev ][ name hash ][ addr ] record on the stack"
-        docLang "for the new dictionary entry..."
-        docLang "Unfortunately this assumes that the operation will"
-        docLang "succeed. FIXME: roll back "
-        docLang "the entire operation if the definition is in some way"
-        docLang "defectuous!"
+        doc "Build our [ prev ][ name hash ][ addr ] record on the stack"
+        doc "for the new dictionary entry..."
+        doc "Unfortunately this assumes that the operation will"
+        doc "succeed. FIXME: roll back "
+        doc "the entire operation if the definition is in some way"
+        doc "broken (e.g. missing term)"
         ppush r9  -- addr
         ppush rax -- name hash 
         ppush r11 -- prev
@@ -618,51 +629,62 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         writeMsgHelper "REPL_DEF_READ_TERMS_LOOP LOOP \n"
 
+        {-
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Failed to parse term within definition body\n"
         pdrop 1
+        -}
 
-        docLang "(TODO) If the first char is \", go into string parsing mode."
-        docLang "Otherwise, read the rest of the characters and look up the "
-        docLang "term in the dictionary!"
+        x86 $ callLabel "READ_HEAD_W8"
+        assertPtop 1 "READ_HEAD_W8 failed\n"
+        pdrop 1
 
-        docLang "Patern match on the first character in the input."
-        docLang "Retrieve the first character by peering down the stack."
+        doc "Patern match on the stack top (READ HEAD W8)."
 
-        ppop rbx  -- Pop the term length from the stack
         x86 $ xor rdx rdx
-        ppopW8 dl -- Top of the stack W8
-        ppush rbx -- Put back the length
-
-        -- FIXME: RDX has the LAST character in the string!
-        -- But what we actually need is the FIRST character!
-        -- I suppose we could save the top of the stack before 
-        -- the READ_PRINTABLES_W8 call.
+        ppeerW8 0 dl -- Top of the stack W8
 
         ppush rdx 
+        writeMsgHelper  "First character HEX code:\n"
         x86 $ callLabel "DBG_DUMP_PTOP_64"
         ppop rdx
         
-        docLang "Is the RDX char greater than ascii code 9?"
+        doc "Is the RDX char greater than ascii code 9?"
         x86 $ cmp rdx $ I32 0x39
         x86 $ jgNear "REPL_DEF_NOT_NUMERIC"
 
-        docLang "Is the RDX char less than ascii code 0?"
+        doc "Is the RDX char less than ascii code 0?"
         x86 $ cmp rdx $ I32 0x30 
         x86 $ jlNear "REPL_DEF_NOT_NUMERIC"
 
-        docLang "Our term starts with 0-9."
-        docLang "Attempt to parse a Positive/Negative Integer Literal."
-        -- PARSE A POSITIVE/NEGATIVE INTEGER LITERAL!
+        doc "Our term starts with 0-9. Therefore, "
+        doc "attempt to parse a Positive Integer Literal."
+
+        -- Read the rest of the input, until whitespace ...
+        x86 $ callLabel "READ_TAIL_W8"
+        assertPtop 1 "READ_TAIL_W8 was not successful!"
+        pdrop 1
+
+        ppop rbx
+        x86 $ inc rbx
+        ppush rbx
 
         x86 $ callLabel "REPL_DEF_INT"
         assertPtop 1 "REPL_DEF_INT was not successful!"
 
-        -- TODO: EMIT_LIT_64
-        x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
+        x86 $ jmpLabel "REPL_DEF_READ_TERMS_LOOP"
 
         -- rdx now contains the first character of the string.
         x86 $ asm $ setLabel "REPL_DEF_NOT_NUMERIC"
+
+        -- Place the rest of the input to the stack...
+        x86 $ callLabel "READ_TAIL_W8"
+        assertPtop 1 "READ_TAIL_W8 was not successful!"
+        pdrop 1
+
+        ppop rbx
+        x86 $ inc rbx
+        ppush rbx
 
         -- TODO: Refactor: move this into REPL_DEF_REFERENCE (A reference to 
         -- another term in the dictionary).
@@ -671,17 +693,17 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         -- If we have read an unknown term, end the loop.
         -- TODO: If we have read a '.' then end the loop (mark the
         -- end of the definition somehow).
-        docLang "If we have read an unknown term, then check whether we"
-        docLang "can parse it as an integer."
+        doc "If we have read an unknown term, then check whether we"
+        doc "can parse it as an integer."
         x86 $ cmp rax (I32 0)
         x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
 
-        docLang "Successful term read, emit a call command to the"
-        docLang "term address:"
+        doc "Successful term read, emit a call command to the"
+        doc "term address:"
         x86 $ callLabel "EMIT_CALL"
         x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
 
-        docLang "Where we break from the read loop:"
+        doc "Where we break from the read loop:"
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP_END"
 
         x86 $ callLabel "EMIT_RET"
@@ -692,21 +714,21 @@ defineREPL :: Lang ()
 defineREPL = defFunBasic "REPL" undefined body
   where
     body = do
-        docLang "REPL"
+        doc "REPL"
         x86 $ asm $ setLabel "REPL_START"
 
-        docLang "Read a term:"
+        doc "Read a term:"
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "READ_PRINTABLES_W8 returned an error!"
         pdrop 1
-        docLang "Hash the term we've read:"
+        doc "Hash the term we've read:"
         x86 $ callLabel "TERM_HASH"
         -- x86 $ callLabel "DBG_DUMP_PTOP_64"
 
         -- The first word is the operation we wish to make.
         -- There are two operations for now, define and call.
-        docLang "Switch on a different functionality"
-        docLang "depending on the hash of the term we've just read:"
+        doc "Switch on a different functionality"
+        doc "depending on the hash of the term we've just read:"
 
         ppop rax
         x86 $ mov rbx (I64 $ fnv1s "def")
@@ -759,8 +781,8 @@ defineEMITCALL :: Lang ()
 defineEMITCALL = defFunBasic "EMIT_CALL" undefined body
   where
     body = do
-        docLang "Emit a call to a certain dictionary entry, the address of which"
-        docLang "is on the stack."
+        doc "Emit a call to a certain dictionary entry, the address of which"
+        doc "is on the stack."
 
         ppop rax
         x86 $ mov rax (derefOffset rax 16)
@@ -800,9 +822,9 @@ defineEMITRET :: Lang ()
 defineEMITRET = defFunBasic "EMIT_RET" undefined body 
   where
     body = do
-        docLang "Emit a return statement which should be always present at "
-        docLang "the end of an assembly body definition."
-        docLang "X86: ret"
+        doc "Emit a return statement which should be always present at "
+        doc "the end of an assembly body definition."
+        doc "X86: ret"
         x86 $ do
             mov (derefOffset r9 0) (I8 0xC3)
             inc r9
@@ -813,13 +835,13 @@ defineEMITLIT = defFunBasic funName ty body
     funName = "EMIT_LIT_64"
     ty      = undefined
     body    = do
-        docLang "Emit assembly code in the dynamic code area"
-        docLang "That pushes a 64bit literal value on the stack."
+        doc "Emit assembly code in the dynamic code area"
+        doc "That pushes a 64bit literal value on the stack."
         x86 $ xor rax rax
         ppop rax -- Take the literal that we need to push and place it in rax
 
         -- TODO: Improve language (repeated code)
-        docLang "X86: sub RSI 8"
+        doc "X86: sub RSI 8"
         x86 $ do
             mov (derefOffset r9 0) (I8 0x48)
             mov (derefOffset r9 1) (I8 0x81)
@@ -830,7 +852,7 @@ defineEMITLIT = defFunBasic funName ty body
             mov (derefOffset r9 6) (I8 0x00)
             add r9 (I32 7)
 
-        docLang "X86: mov [RSI+0] <- IMM32"
+        doc "X86: mov [RSI+0] <- IMM32"
         x86 $ do
             mov (derefOffset r9 0) (I8 0x48)
             mov (derefOffset r9 1) (I8 0xC7)
@@ -854,8 +876,8 @@ definePTopWrite = defFunBasic funName ty body
     funName = "PTOP_WRITE"
     ty = undefined
     body = do
-        docLang "Prints the top 64 bit word from the top of the stack as"
-        docLang "a HEX value on screen."
+        doc "Prints the top 64 bit word from the top of the stack as"
+        doc "a HEX value on screen."
         ppop rax
         x86 $ mov rbx 8 -- There are 8 chars to write
 
@@ -882,13 +904,13 @@ defineTermHash = defFunBasic funName ty body
     funName = "TERM_HASH"
     ty      = undefined -- Unexpressible atm.
     body    = do
-        docLang "Given a word on the stack, compute its hash. This helps to"
-        docLang "compare words for equality when searching the dictionary."
-        docLang "Trying out the (simple) FNV Hash function from Wikipedia"
-        docLang "RBX holds the length to iterate."
-        docLang "E.g. 'cba' has hash 15626587013303479755"
+        doc "Given a word on the stack, compute its hash. This helps to"
+        doc "compare words for equality when searching the dictionary."
+        doc "Trying out the (simple) FNV Hash function from Wikipedia"
+        doc "RBX holds the length to iterate."
+        doc "E.g. 'cba' has hash 15626587013303479755"
         ppop rbx
-        docLang "RAX holds the hash."
+        doc "RAX holds the hash."
         x86 $ mov rax $ I64 fnvOffsetBasis
 
         x86 $ asm $ setLabel "TERM_HASH_WHILE"
@@ -913,7 +935,7 @@ defineConsumeWhitespace = defFunBasic funName ty body
     funName = ""
     ty      = undefined
     body    = do
-        docLang "Consume input characters "
+        doc "Consume input characters "
 
 -- Type: -> w8 :...:w8   :w64:w64
 -- Func: -> w_0:...:w_n-1:n  :success
@@ -924,8 +946,8 @@ defineTermReadLinux = defFunBasic funName ty body
     funName = "READ_PRINTABLES_W8"
     ty      = undefined -- Unexpressible atm.
     body    = do
-        docLang "READ_HEAD_W8 consumes any whitespace present before"
-        docLang "the term and it pushes the first encountered non-ws char."
+        doc "READ_HEAD_W8 consumes any whitespace present before"
+        doc "the term and it pushes the first encountered non-ws char."
         x86 $ callLabel "READ_HEAD_W8"
 
         -- x86 $ writeMsgHelper "READ_HEAD_W8 called, it returned:\n"
@@ -936,15 +958,15 @@ defineTermReadLinux = defFunBasic funName ty body
         -- x86 $ writeMsgHelper "This is what it read:\n"
         -- x86 $ callLabel "DBG_DUMP_PTOP_64"
 
-        docLang "Reads characters until a space or a control "
-        docLang "char (non-printable) is read."
+        doc "Reads characters until a space or a control "
+        doc "char (non-printable) is read."
         x86 $ callLabel "READ_TAIL_W8"
         ppop rax
         ppop rbx
 
-        docLang "Increment the number of characters reutnred by "
-        docLang "READ_TAIL_W8 to account for the extra char on "
-        docLang "the pstack placed by READ_HEAD_W8 above."
+        doc "Increment the number of characters reutnred by "
+        doc "READ_TAIL_W8 to account for the extra char on "
+        doc "the pstack placed by READ_HEAD_W8 above."
         x86 $ inc rbx
         ppush rbx
         ppush rax
@@ -958,18 +980,18 @@ defineRdHeadW8 = defFunBasic funName undefined body
   where
     funName = "READ_HEAD_W8"
     body = do
-        docLang "Allocate 1 byte on the parameter-stack in which our"
-        docLang "first non-whitespace character is placed:"
+        doc "Allocate 1 byte on the parameter-stack in which our"
+        doc "first non-whitespace character is placed:"
         ppush $ I8 0x00
 
         x86 $ asm $ setLabel "RPC_WHILE"
-        docLang "Please read"
+        doc "Please read"
         x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-        docLang "1 char"
+        doc "1 char"
         x86 $ mov rdx $ I64 0x01 
-        docLang "From stdin"
+        doc "From stdin"
         x86 $ xor rbx rbx
-        docLang "Into the pstack"
+        doc "Into the pstack"
         x86 $ mov rcx rsi
         x86 $ int
 
@@ -996,36 +1018,36 @@ defineRdTailW8 = defFunBasic funName ty body
     funName = "READ_TAIL_W8"
     ty = undefined
     body = do
-        docLang "READ_TAIL_W8 reads characters until a non-printable"
-        docLang "character is encountered."
-        docLang "It pushes on the stack an array of w8s then it pushes a"
-        docLang "w64 indicating how many chars have been read,"
-        docLang "followed by a w64 indicating success or failure."
-        docLang "r15 counts the chars that are successfully read."
+        doc "READ_TAIL_W8 reads characters until a non-printable"
+        doc "character is encountered."
+        doc "It pushes on the stack an array of w8s then it pushes a"
+        doc "w64 indicating how many chars have been read,"
+        doc "followed by a w64 indicating success or failure."
+        doc "r15 counts the chars that are successfully read."
         x86 $ xor r15 r15
         x86 $ asm $ setLabel "READ_TAIL_WHILE"
 
-        docLang "Allocate 1 byte on the stack to read into"
+        doc "Allocate 1 byte on the stack to read into"
         ppush $ I8 0x00
-        docLang "Please read"
+        doc "Please read"
         x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
-        docLang "1 char"
+        doc "1 char"
         x86 $ mov rdx $ I64 0x01 
-        docLang "From stdin"
+        doc "From stdin"
         x86 $ xor rbx rbx
-        docLang "Into the pstack"
+        doc "Into the pstack"
         x86 $ mov rcx rsi
         x86 $ int
 
         x86 $ cmp rax $ I32 0x00
         x86 $ je "READ_TAIL_W8_ERROR"
        
-        docLang "Place the char we've just read into rax"
+        doc "Place the char we've just read into rax"
         x86 $ xor rax rax
         ptopW8 al
 
-        docLang "Probe the char we just read if it's non-printable "
-        docLang "then break the loop:"
+        doc "Probe the char we just read if it's non-printable "
+        doc "then break the loop:"
         x86 $ cmp rax $ I32 0x20 -- Space or less, skip
         x86 $ jleNear "READ_TAIL_W8_BREAK" 
         x86 $ cmp rax $ I32 0x7F -- ESC
@@ -1033,24 +1055,24 @@ defineRdTailW8 = defFunBasic funName ty body
 
         x86 $ inc r15
         
-        docLang "Repeat"
+        doc "Repeat"
         x86 $ jmpLabel "READ_TAIL_WHILE"
 
         x86 $ asm $ setLabel "READ_TAIL_W8_BREAK"
-        docLang "Free the stack from the last allocation:"
+        doc "Free the stack from the last allocation:"
         ppopW8 al
-        docLang "Number of chars read:"
+        doc "Number of chars read:"
         ppush $ r15
-        docLang "Success:"
+        doc "Success:"
         ppush $ I32 1
         x86 $ ret
 
         x86 $ asm $ setLabel "READ_TAIL_W8_ERROR"
-        docLang "Free the stack from the last allocation:"
+        doc "Free the stack from the last allocation:"
         ppopW8 al
-        docLang "Number of chars read:"
+        doc "Number of chars read:"
         ppush $ r15
-        docLang "Error:"
+        doc "Error:"
         ppush $ I32 0
         x86 $ ret
        
@@ -1066,7 +1088,7 @@ defineRdChrLinux = defFunBasic funName ty body
     funName = "READ_CHAR"
     ty      = TyFunc "READ_CHAR" TyEmpty (TyProd baseWord TyWord)
     body = do
-        docLang "Allocate 1 byte on the param stack:"
+        doc "Allocate 1 byte on the param stack:"
         ppush $ I8 0x00
 
         x86 $ do 
@@ -1113,6 +1135,58 @@ defineExit = defFunBasic "EXIT" ty body
             x86 $ mov rax $ I64 1
             x86 $ int
 
+-- Type :w8  -> :w8
+-- Func :val -> :val
+-- Does nothing; as a side effect, it prints the top of the stack on stdout.
+defineDbgDumpPtop8 :: Lang ()
+defineDbgDumpPtop8 = defFunBasic "DBG_DUMP_PTOP_8" ty body
+  where
+    ty = TyFunc "DBG_DUMP_PTOP_8" baseWord baseWord
+    body = do
+        doc "rax holds the top of the stack."
+        ppeek rax
+        doc "A 8 bit value needs 2 chars to be printed. RCX is the counter."
+        x86 $ mov rcx $ I64 2
+
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_8_START"
+        x86 $ mov rbx $ I64 0x10
+        x86 $ xor rdx rdx
+        x86 $ cmp rcx $ I32 0
+        x86 $ je "DBG_DUMP_PTOP_8_END"
+        x86 $ div_ rbx
+        doc "Print rdx, which holds the remainder."
+
+        x86 $ cmp rdx $ I32 10
+        x86 $ jl "DBG_DUMP_PTOP_8_LT10"
+        doc "Value between [10 and 15]"
+        doc "Add 55 to rdx"
+        x86 $ add rdx $ I32 55
+        ppush rdx
+        x86 $ dec rcx
+        x86 $ jmpLabel "DBG_DUMP_PTOP_8_START"
+
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_8_LT10"
+        doc "Value between [0 and 9]"
+        doc "Add 0x30 to rdx"
+        x86 $ add rdx $ I32 0x30
+        ppush rdx
+        x86 $ dec rcx
+        x86 $ jmpLabel "DBG_DUMP_PTOP_8_START"
+
+        x86 $ asm $ setLabel "DBG_DUMP_PTOP_8_END"
+        doc "2 times write char. Conveniently, using the stack before "
+        doc "printing reverses the "
+        doc "order of the chars (which we need to do)."
+        replicateM 2 $ do
+            x86 $ callLabel "WRITE_CHAR"
+            pdrop 1
+
+        doc "Write a newline char"
+        ppush $ I32 0x0A
+        x86 $ callLabel "WRITE_CHAR"
+        pdrop 1
+
+
 -- Type :w64 -> :w64
 -- Func :val -> :val
 -- Does nothing; as a side effect, it prints the top of the stack on stdout.
@@ -1121,9 +1195,9 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
   where
     ty = TyFunc "DBG_DUMP_PTOP_64" baseWord baseWord
     body = do
-        docLang "rax holds the top of the stack."
+        doc "rax holds the top of the stack."
         ppeek rax
-        docLang "A 64 bit value needs 16 chars to be printed. RCX is the counter."
+        doc "A 64 bit value needs 16 chars to be printed. RCX is the counter."
         x86 $ mov rcx $ I64 16 
 
         x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_START"
@@ -1132,34 +1206,34 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
         x86 $ cmp rcx $ I32 0
         x86 $ je "DBG_DUMP_PTOP_64_END"
         x86 $ div_ rbx
-        docLang "Print rdx, which holds the remainder."
+        doc "Print rdx, which holds the remainder."
 
         x86 $ cmp rdx $ I32 10
         x86 $ jl "DBG_DUMP_PTOP_64_LT10"
-        docLang "Value between [10 and 15]"
-        docLang "Add 55 to rdx"
+        doc "Value between [10 and 15]"
+        doc "Add 55 to rdx"
         x86 $ add rdx $ I32 55
         ppush rdx
         x86 $ dec rcx
         x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
 
         x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_LT10"
-        docLang "Value between [0 and 9]"
-        docLang "Add 0x30 to rdx"
+        doc "Value between [0 and 9]"
+        doc "Add 0x30 to rdx"
         x86 $ add rdx $ I32 0x30
         ppush rdx
         x86 $ dec rcx
         x86 $ jmpLabel "DBG_DUMP_PTOP_64_START"
 
         x86 $ asm $ setLabel "DBG_DUMP_PTOP_64_END"
-        docLang "16 times write char. Conveniently, using the stack before "
-        docLang "printing reverses the "
-        docLang "order of the chars (which we need to do)."
+        doc "16 times write char. Conveniently, using the stack before "
+        doc "printing reverses the "
+        doc "order of the chars (which we need to do)."
         replicateM 16 $ do
             x86 $ callLabel "WRITE_CHAR"
             pdrop 1
 
-        docLang "Write a newline char"
+        doc "Write a newline char"
         ppush $ I32 0x0A
         x86 $ callLabel "WRITE_CHAR"
         pdrop 1
@@ -1226,16 +1300,16 @@ defineLit = defFunBasic fn ty body where
     fn = "LIT"
     ty = TyFunc fn TyEmpty baseWord
     body = do
-        docLang "Look up the call stack to find out the position from which"
-        docLang "LIT was called:"
+        doc "Look up the call stack to find out the position from which"
+        doc "LIT was called:"
         x86 $ ctop rax
-        docLang "Place on rbx the word found after the parent LIT reference:"
+        doc "Place on rbx the word found after the parent LIT reference:"
         x86 $ mov rbx (derefOffset rax 0)
-        docLang "Push the value from rbx (the literal) onto the stack."
+        doc "Push the value from rbx (the literal) onto the stack."
         ppush rbx
-        docLang "Manipulate the call stack so that the RET that follows"
-        docLang "skips the literal we have just read (which by no means"
-        docLang "should be returned to and executed!)"
+        doc "Manipulate the call stack so that the RET that follows"
+        doc "skips the literal we have just read (which by no means"
+        doc "should be returned to and executed!)"
         x86 $ add rsp $ I32 8
 -}
 
@@ -1287,24 +1361,24 @@ defineEval = do
     -- FIXME: Eval has a bug, it claims to use r9 to iterate through the
     -- dictionary entry r8, but it doesn't increment r9 once done, it 
     -- increments r8! I don't think r9 is needed!
-    docLang "r8 holds the term (dict. pointer) under evaluation. It's a"
-    docLang "pointer to an array of terms that ends in 0."
-    docLang "r9 is the dictionary entry pointed by r8:"
+    doc "r8 holds the term (dict. pointer) under evaluation. It's a"
+    doc "pointer to an array of terms that ends in 0."
+    doc "r9 is the dictionary entry pointed by r8:"
     x86 $ mov r9 (derefOffset r8 0)
 
     x86 $ cmp r9 (I32 0x00)  -- If r8 points to 0...
     x86 $ jeNear "EVAL_STOP" -- Empty word reached - reached the sequence end.
 
-    docLang "r9 + 0:  .prev (-ious) dictionary entry, if any"
-    docLang "r9 + 8:  .hash of rntry name, fnv1 for easy search"
-    docLang "r9 + 16: .type of dictionary entry (0=asm, 1=words or typedef?)"
-    docLang "r9 + 24: .len  of parameters on the stack"
-    docLang "r9 + 32: .addr of ASM or term sequence in memory"
+    doc "r9 + 0:  .prev (-ious) dictionary entry, if any"
+    doc "r9 + 8:  .hash of rntry name, fnv1 for easy search"
+    doc "r9 + 16: .type of dictionary entry (0=asm, 1=words or typedef?)"
+    doc "r9 + 24: .len  of parameters on the stack"
+    doc "r9 + 32: .addr of ASM or term sequence in memory"
 
-    docLang "Move def.type to r10"
+    doc "Move def.type to r10"
     x86 $ mov r10 (derefOffset r9 16)
 
-    docLang "Pattern match def.type:"
+    doc "Pattern match def.type:"
     -- TODO: Could we avoid the r10 register?
     -- can we do: cmp (derefOffset r9 16) (I32 0x00)
     x86 $ cmp r10 (I32 0x00)
@@ -1312,20 +1386,20 @@ defineEval = do
     x86 $ cmp r10 (I32 0x01)
     x86 $ jeNear "EVAL_SEQ"
 
-    docLang "def.type == 0: Evaluating assembly"
-    docLang "Move def.addr to r10. Assume the ASM doesn't modify r8."
+    doc "def.type == 0: Evaluating assembly"
+    doc "Move def.addr to r10. Assume the ASM doesn't modify r8."
     x86 $ do
         asm $ setLabel "EVAL_ASM"
         mov  r10 (derefOffset r9 32)
         call r10 
         jmpLabel "EVAL_STEP_DONE"
 
-    docLang "def.type == 1: Evaluating a sequence of words"
-    docLang "Recursively call EVAL on each sequence word."
-    docLang "The sequence to be called is at r9 + 32 (.addr)."
-    docLang "Prepare for eval recursion: save the current r8 on the "
-    docLang "call stack and make r8 now point to the first term in "
-    docLang "the sequence. "
+    doc "def.type == 1: Evaluating a sequence of words"
+    doc "Recursively call EVAL on each sequence word."
+    doc "The sequence to be called is at r9 + 32 (.addr)."
+    doc "Prepare for eval recursion: save the current r8 on the "
+    doc "call stack and make r8 now point to the first term in "
+    doc "the sequence. "
     x86 $ do 
         asm $ setLabel "EVAL_SEQ"
 
@@ -1382,7 +1456,7 @@ defineEval = do
     x86 $ asm $ setLabel "EVAL_STEP_DONE"
 
     -- Move on to the next word in the sequence we're evaluating.
-    docLang "Advance the word pointer to the next word and loop back to EVAL."
+    doc "Advance the word pointer to the next word and loop back to EVAL."
     x86 $ add r8 (I32 8)
     x86 $ jmpLabel "EVAL"
 
@@ -1448,7 +1522,7 @@ pdropW8 numW8s =
 -- Parameter stack pop
 ppop :: Val -> Lang ()
 ppop dst64@(R64 _) = do
-    docLang $ "ppop " ++ show dst64
+    doc $ "ppop " ++ show dst64
     x86 $ mov dst64 $ derefOffset rsi 0
     x86 $ add rsi $ I32 8
 
@@ -1492,7 +1566,7 @@ ctop = cpeer 0
 -- FIXME: Rather than RSI use RBP which isn't used anyway.
 ppush :: Val -> Lang ()
 ppush v | supported v = do
-    docLang $ "ppush " ++ show v
+    doc $ "ppush " ++ show v
     x86 $ sub rsi $ I32 $ sz v
     x86 $ mov (derefOffset rsi 0) v
     where sz (I64 _)    = 8

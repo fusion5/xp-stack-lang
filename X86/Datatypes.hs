@@ -4,6 +4,7 @@ module X86.Datatypes where
 
 import Data.Word
 import ASM.Datatypes
+import ASM.ASM
 import Control.Applicative
 import Control.Monad (ap, liftM)
 
@@ -21,6 +22,12 @@ instance Functor X86_64 where
 instance Applicative X86_64 where
     pure   = return
     (<*>)  = ap
+
+instance Documentation X86_64 where
+    doc = asm . doc
+
+instance Labelable X86_64 where
+    setLabel = asm . setLabel
 
 derefOffset :: Val -> Integer -> Val
 derefOffset (R64 r) offset = RR64 r offset

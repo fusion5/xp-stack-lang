@@ -14,9 +14,6 @@ import Data.Int
 
 -- Documentation at the X86 programming level (asm instructions)
 
-instance Documentation (X86_64 ()) where
-    doc = asm . doc
-
 docX86 :: String -> X86_64 ()
 docX86 = doc . ("X86: " ++)
 

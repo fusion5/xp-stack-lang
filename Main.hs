@@ -77,7 +77,7 @@ initDynamicDefinitionsMemory = do
     docX86 "Apparently it's writeable and executable by default."
 
 mainLang = do
-    docLang "Read from stdin the dict. entry that we should interpret."
+    doc "Read from stdin the dict. entry that we should interpret."
 
     -- Test for input string 'abc'
     {-
@@ -105,10 +105,10 @@ mainLang = do
     ppushI32 $ length mainTerm
     x86 $ callLabel "TERM_LOOK"
     assertPtop 1 "REPL dictionary entry must be in the dictionary!"
-    docLang "Drop the success return code of TERM_LOOK:"
+    doc "Drop the success return code of TERM_LOOK:"
     pdrop 1
-    docLang "Now take the '.addr' field from the dictionary term found by "
-    docLang "TERM_LOOK:"
+    doc "Now take the '.addr' field from the dictionary term found by "
+    doc "TERM_LOOK:"
     ppop rax
     x86 $ mov rax (derefOffset rax 16)
 
@@ -120,7 +120,7 @@ mainLang = do
     ppop rax
     -}
 
-    docLang "Call REPL:"
+    doc "Call REPL:"
     x86 $ call rax
     x86 $ callLabel "EXIT"
 
@@ -139,7 +139,7 @@ mainASM = do
 assembly = do
     elf64Header $ programHeader vaddr_offset $ do
         mainASM 
-        documentation "The string table with all collected strings:"
+        doc "The string table with all collected strings:"
         emitStringTable
     replaceProgSize
     replaceLabels  vaddr_offset

@@ -1,6 +1,8 @@
 {-# Language TypeSynonymInstances #-}
 {-# Language FlexibleInstances #-}
 {-# Language FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module ASM.ASM where
 
 import Control.Monad.Except
@@ -133,18 +135,24 @@ append word state = state { asm_instr  = asm_instr  state |> word
                           }
     -- where lbw = fromIntegral $ lenBytesCode word
 
-instance Documentation (ASM ()) where
+instance Documentation ASM where
     doc str = do 
         s <- get
         modify $ append $ ASMDoc (asm_offset s) str
 
+instance Labelable ASM where
+    setLabel = setLabelASM
+
+
+{-
 documentation :: String -> ASM ()
 documentation txt = doc txt {- do
     s <- get
     modify $ append $ ASMDoc (asm_offset s) txt -}
+-}
 
-setLabel :: String -> ASM ()
-setLabel txt = do
+setLabelASM :: String -> ASM ()
+setLabelASM txt = do
     s <- get
     modify $ append $ ASMLabel (asm_offset s) txt
 

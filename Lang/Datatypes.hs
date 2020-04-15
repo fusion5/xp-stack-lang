@@ -1,5 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Lang.Datatypes where
 
 import Lang.Types
@@ -10,7 +12,7 @@ import Data.Word
 
 import Control.Monad.Trans.State
 
-type Lang a = StateT LangState (X86_64) a
+type Lang = StateT LangState (X86_64)
 
 -- This might not be needed in the end, because types will
 -- not be considered at compile time...
@@ -24,6 +26,9 @@ data SeqInstr =
     SeqDefLit64 Word64
   | SeqDefTerm  String
   | SeqDefParam String
+
+instance Labelable Lang where
+    setLabel l = x86 $ setLabel l
 
 lit :: Word64 -> SeqInstr
 lit = SeqDefLit64
