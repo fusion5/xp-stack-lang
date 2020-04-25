@@ -554,44 +554,52 @@ defineLIT = defFunBasic funName ty body
 -- Func: :w_0:..:w_n-1:n   -> (w_n-1 + w_n-2*10 + ... w_0*10^n-1):success
 -- Convert a base 10 integer string to an integer.
 defineREPLDefInt :: Lang () 
-defineREPLDefInt = defFunBasic "REPL_DEF_PARSEINT" undefined body
+defineREPLDefInt = defFunBasic "PARSEINT" undefined body
   where
     body = do
         doc "Parse an integer that is part of the REPL definition."
-
-        ppop rbx -- Remaining string characters
-        x86 $ mov rcx $ I64 1  -- A number of form 10^k
-        x86 $ xor r10 r10      -- Where we keep the sum
+        doc "rbx holds the number of string characters left"
+        ppop rbx 
+        doc "rcx holds a power of 10 (multiplier). It starts from number 1."
+        x86 $ mov rcx $ I64 1
+        doc "we store the intermediate parse result in r10"
+        x86 $ xor r10 r10
         
         setLabel "REPL_DEF_INT_LOOP"
 
         x86 $ cmp rbx $ I32 0
         x86 $ jeNear "REPL_DEF_INT_END"
 
-        -- Warning: DBG_DUMP_PTOP_8 messes up used registers!
+        doc "Decrease the remaining chars counter"
+        x86 $ dec rbx
+
+        -- Warning: DBG_DUMP_PTOP_8 interacts with our registers!
         -- x86 $ callLabel "DBG_DUMP_PTOP_8"
 
         x86 $ xor rax rax
-        ppopW8 al                -- Drop the 8-bit word from the pstack.
+        doc "Drop the 8-bit word from the pstack:"
+        ppopW8 al
 
-        x86 $ sub rax $ I32 0x30 -- Convert from ascii to a base10 number
+        doc "Convert from ascii to a base10 number by subtracting 0x30:"
+        x86 $ sub rax $ I32 0x30
+        doc "In case of overflow, return an error:"
         x86 $ joNear "REPL_DEF_INT_ERROR"
 
-        x86 $ cmp rax $ I32 0x39 -- Compare to ascii digit 9.
+        doc "After subtraction, if rax is greater than 9, then we've had"
+        doc "a non-digit character which results in a parse error:"
+        x86 $ cmp rax $ I32 9
         x86 $ jgNear "REPL_DEF_INT_ERROR"
 
-        -- Multiply rax by the current power of 10.
+        doc "Multiply rax by the current power of 10."
         x86 $ mul rcx
         x86 $ joNear "REPL_DEF_INT_ERROR"
 
-        -- Add rax to the accumulator
+        doc "Add rax to the accumulator"
         x86 $ add r10 rax
         x86 $ joNear "REPL_DEF_INT_ERROR"
 
-        x86 $ dec rbx -- Decrease the remaining chars counter.
-
-        -- Multiply rcx by 10
-        x86 $ mov rdx $ I64 10 -- Constant (base power)
+        doc "Multiply rcx by constant 10 (our base)"
+        x86 $ mov rdx $ I64 10
         x86 $ mov rax rcx
         x86 $ mul rdx
         x86 $ joNear "REPL_DEF_INT_ERROR"
@@ -605,6 +613,9 @@ defineREPLDefInt = defFunBasic "REPL_DEF_PARSEINT" undefined body
         x86 $ ret
 
         setLabel "REPL_DEF_INT_ERROR"
+        doc "Drop any remaining W8 characters from the stack to enforce the"
+        doc "function type"
+        x86 $ add rsi rbx
         ppush r10
         ppush $ I32 0
         x86 $ ret
@@ -613,12 +624,14 @@ defineREPLDef :: Lang ()
 defineREPLDef = defFunBasic "REPL_DEF" undefined body
   where
     body = do
-        doc "REPL Definition subfunction."
-        doc "This is the REPL part that reads new definitions."
-        doc "It is not callable directly from the dictionary, it's "
-        doc "only called from REPL."
+        doc "This is the REPL functionality that parses new definitions."
+        doc "It is not exposed in the dictionary, it's"
+        doc "only a procedure called from the REPL function when the "
+        doc "'def' command is issued."
+        doc "An example of input that this function can expect from"
+        doc "stdin is: 'ADD_2 = 2 PLUS .'"
 
-        doc "Read and hash the term being defined:"
+        doc "Read and hash the term being defined (e.g. ADD_2):"
         x86 $ callLabel "READ_PRINTABLES_W8"
         assertPtop 1 "Could not read the term to define!\n"
         pdrop 1
@@ -630,23 +643,26 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         pdrop 1
 
         x86 $ xor rax rax
-        ppopW8 al -- The char returned by READ_HEAD_W8
+        ppopW8 al
         doc "The ascii code for '=' is 0x3D"
         x86 $ mov rbx $ I64 $ 0x3D
         x86 $ cmp rax rbx
         x86 $ jeNear "REPL_DEF_READ_TERMS"
+
         doc "We have not read the equal sign. Return"
         writeMsgHelper "Error: expecting an '=' character after the term.\n"
         x86 $ ret
+
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS"
 
-        ppop rax -- The hash of the term we're defining
-        doc "Build our [ prev ][ name hash ][ addr ] record on the stack"
+        doc "Place into rax the has of the definition name hash:"
+        ppop rax
+
+        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
         doc "for the new dictionary entry..."
-        doc "Unfortunately this assumes that the operation will"
-        doc "succeed. FIXME: roll back "
-        doc "the entire operation if the definition is in some way"
-        doc "broken (e.g. missing term)"
+        doc "In case of an error, (e.g. a missing term or an integer " 
+        doc "overflow, then this is rolled back:"
+
         ppush r9  -- addr
         ppush rax -- name hash 
         ppush r11 -- prev
@@ -654,33 +670,30 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP"
 
-        {-
-        x86 $ callLabel "READ_PRINTABLES_W8"
-        assertPtop 1 "Failed to parse term within definition body\n"
-        pdrop 1
-        -}
-
         x86 $ callLabel "READ_HEAD_W8"
         assertPtop 1 "READ_HEAD_W8 failed\n"
         pdrop 1
 
-        doc "Patern match on the stack top (READ HEAD W8)."
+        doc "Patern match on the first character that was read "
+        doc "i.e. the stack top / the result of READ_HEAD_W8 / rax:"
 
-        -- TODO: If the character is a dot, then end the definition.
+        x86 $ xor rax rax
+        ppeerW8 0 al
 
-        x86 $ xor rdx rdx
-        ppeerW8 0 dl -- Top of the stack W8
+        doc "Is the char a dot? Then end the definition succesffuly."
+        x86 $ cmp rax $ I32 0x2E
+        x86 $ jeNear "REPL_DEF_READ_TERMS_LOOP_END"
 
-        doc "Is the RDX char greater than ascii code 9?"
-        x86 $ cmp rdx $ I32 0x39
+        doc "Is the char greater than ascii code 9?"
+        x86 $ cmp rax $ I32 0x39
         x86 $ jgNear "REPL_DEF_NOT_NUMERIC"
 
-        doc "Is the RDX char less than ascii code 0?"
-        x86 $ cmp rdx $ I32 0x30 
+        doc "Is the char less than ascii code 0?"
+        x86 $ cmp rax $ I32 0x30 
         x86 $ jlNear "REPL_DEF_NOT_NUMERIC"
 
         doc "Our term starts with 0-9. Therefore, "
-        doc "attempt to parse a Positive Integer Literal."
+        doc "attempt to parse a positive integer literal."
 
         -- Read the rest of the input, until whitespace ...
         x86 $ callLabel "READ_TAIL_W8"
@@ -691,40 +704,45 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         x86 $ inc rbx
         ppush rbx
 
-        x86 $ callLabel "REPL_DEF_PARSEINT"
-        -- TODO: Keep on parsing, don't quit the program (roll back 
-        -- the definition)
-        assertPtop 1 "Integer error - overflow or invalid characters!\n"
+        x86 $ callLabel "PARSEINT"
+        ppop rax
+        x86 $ cmp rax $ I32 1
+        x86 $ jeNear "PARSEINT_OK"
+        writeMsgHelper "Integer parse error!\n"
+        doc "Drop the dummy parseint result"
         pdrop 1
+        x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
+        setLabel "PARSEINT_OK"
 
-        -- Emit the JIT literal that was just entered.
+        doc "Emit the JIT literal that was just entered."
         x86 $ callLabel "EMIT_LIT_64"
 
+        doc "Move on to the next term."
         x86 $ jmpLabel "REPL_DEF_READ_TERMS_LOOP"
 
-        -- rdx now contains the first character of the string.
         x86 $ asm $ setLabel "REPL_DEF_NOT_NUMERIC"
 
-        -- Place the rest of the input to the stack...
+        doc "Place the rest of the input to the stack..."
         x86 $ callLabel "READ_TAIL_W8"
         assertPtop 1 "READ_TAIL_W8 was not successful!"
         pdrop 1
 
+        doc "Increment rbx to account for the READ_HEAD_W8 character too"
         ppop rbx
         x86 $ inc rbx
         ppush rbx
 
-        -- TODO: Refactor: move this into REPL_DEF_REFERENCE (A reference to 
-        -- another term in the dictionary).
         x86 $ callLabel "TERM_LOOK"
         ppop rax
-        -- If we have read an unknown term, end the loop.
-        -- TODO: If we have read a '.' then end the loop (mark the
-        -- end of the definition somehow).
-        doc "If we have read an unknown term, then check whether we"
-        doc "can parse it as an integer."
-        x86 $ cmp rax (I32 0)
-        x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
+        x86 $ cmp rax $ I32 1
+        x86 $ jeNear "TERM_LOOK_OK"
+        writeMsgHelper "Term not found!\n"
+        pdrop 1 -- Drop the dummy TERM_LOOK result...
+        x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
+        setLabel "TERM_LOOK_OK"
+        -- ppop rax
+        -- x86 $ cmp rax (I32 0)
+        -- x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
 
         doc "Successful term read, emit a call command to the"
         doc "term address:"
@@ -736,6 +754,14 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
 
         x86 $ callLabel "EMIT_RET"
         writeMsgHelper "Definition added.\n"
+        x86 $ ret
+
+        setLabel "REPL_DEF_ERROR_ROLLBACK"
+        doc "Restore the previous state from the stack data:"
+        ppop  r11 -- prev
+        pdrop 1   -- name hash, don't care
+        ppop  r9  -- addr
+        writeMsgHelper "Definition failed!\n"
         x86 $ ret
 
 defineREPL :: Lang ()
