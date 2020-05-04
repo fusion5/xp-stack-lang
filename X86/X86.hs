@@ -344,6 +344,9 @@ je label = do
     asm $ bflush
 
 -- je can only jump -/+128 so we introduce near jumps
+-- The offset is from the beginning of the command:
+-- "a signed offset relative to the current value of the instruc-
+-- tion pointer in the EIP register"
 jNear code label = do
     emit1 0x0F
     emit1 code

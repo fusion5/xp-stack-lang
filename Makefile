@@ -36,3 +36,16 @@ functional_test: main
 	echo def A = 1 . run A run DBG_DUMP_PTOP_64 | ./main
 	echo def A = PLUS . | ./main
 	echo def A = 1 1 PLUS . run A run DBG_DUMP_PTOP_64 | ./main
+	cat if0_1.program | ./main
+	cat if0_2.program | ./main
+
+# Debug program trace example
+#	printf "set confirm off \n\
+#		set logging on \n\
+#		set pagination off \n\
+#		set disassembly-flavor intel \n\
+#		set disassemble-next-line on \n\
+#		starti < if0.program \n\
+#		while 1 \n\
+#		stepi \n\
+#		end" | gdb ./main

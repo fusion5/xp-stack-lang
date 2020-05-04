@@ -77,6 +77,8 @@ defineBaseDefBodies = do
     defineNOT
     defineEMITLIT
     defineEMITCALL
+    defineEMITIF0_START
+    defineEMITIF0_END
     defineEMITRET
     -- defineLIT
     -- defineIFPOP0
@@ -832,6 +834,7 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" undefined body
             x86 $ jneNear "PARSE_IF_TERM_INT_ERROR"
             doc "Emit the JIT literal that was just entered."
             x86 $ callLabel "EMIT_LIT_64"
+
             doc "Parse successful."
             ppush $ I32 1
             x86 $ ret
@@ -874,14 +877,23 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" undefined body
             x86 $ cmp rax $ I32 0x7B -- {
             x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_OPEN"
 
+            doc "Emit the 'IF0' initial part"
+            x86 $ callLabel "EMIT_IF0_START"
+
             x86 $ callLabel "PARSE_IF_TERMS"
             pdrop 1 -- Ignore whether PARSE_IF_TERMS had a parse error or not
-
+            
             doc "After PARSE_IF_TERMS returns there should be a '}'"
             x86 $ xor rax rax
-            ppeerW8 0 al
+            ppopW8 al
             x86 $ cmp rax $ I32 0x7D -- }
             x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
+
+            doc "Complete the 'IF0'!"
+            x86 $ callLabel "EMIT_IF0_END"
+            
+            ppush $ I32 1
+            x86   $ ret
 
         setLabel "PARSE_IF_TERM_NOT_IF0"
         do
@@ -896,7 +908,7 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" undefined body
             x86 $ cmp rax $ I32 0
             x86 $ jeNear "PARSE_IF_TERM_UNDEFINED"
             
-            doc "Successful term read, emit a call command to the"
+            doc "Successful term read; emit a call command to the"
             doc "term address:"
             x86 $ callLabel "EMIT_CALL"
 
@@ -1173,7 +1185,74 @@ defineREPL = defFunBasic "REPL" undefined body
 
         x86 $ asm $ setLabel "REPL_QUIT"
         
+
+-- Emits the current position and pushes on the stack
+-- the address at which the 32-bit offset to be later on filled
+-- is located.
+defineEMITIF0_START :: Lang () 
+defineEMITIF0_START = defFunBasic "EMIT_IF0_START" undefined body
+  where
+    body = do
+        doc "Emit IF0 start"
+        -- ppop rax
+        -- 48 8B 06 : mov rax,[rsi]
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0x8B)
+            mov (derefOffset r9 2) (I8 0x06)
+            add r9 (I32 3)
+
+        -- 48 3D 00 00 00 00 : cmp rax,0x0
+        x86 $ do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0x3D)
+            mov (derefOffset r9 2) (I8 0x00)
+            mov (derefOffset r9 3) (I8 0x00)
+            mov (derefOffset r9 4) (I8 0x00)
+            mov (derefOffset r9 5) (I8 0x00)
+            add r9 (I32 6)
+
+        -- 0x0F 0x85           -- JNE NEAR opcode
+        -- 0x00 0x00 0x00 0x00 -- 32-bit offest, to be filled afterwards.
+        doc "We don't yet know the jump offset. To fill this"
+        doc "out later (in EMIT_IF0_END), save the position at which the "
+        doc "address is to be written."
+        doc "The offset is to be calculated from the position of JNE (0F 85)"
+        x86 $ do
+            mov (derefOffset r9 0) (I8  0x0F)
+            mov (derefOffset r9 1) (I8  0x85)
+            mov (derefOffset r9 2) (I8 0x00)
+            mov (derefOffset r9 3) (I8 0x00)
+            mov (derefOffset r9 4) (I8 0x00)
+            mov (derefOffset r9 5) (I8 0x00)
+            add r9 (I32 6)
+
+        ppush r9
+
+-- Complete the definition created by defineEMITIF0_START
+defineEMITIF0_END :: Lang () 
+defineEMITIF0_END = defFunBasic "EMIT_IF0_END" undefined body
+  where
+    body = do
+        doc "Emit IF0 end (it doesn't emit opcode, it just writes the current"
+        doc "r9)"
+
+        ppop rax              -- Saved R9
+                              -- rbx := Offset =
+        x86 $ mov rbx r9        -- Current offset R9
+        x86 $ sub rbx rax       -- Minus saved offset R9
         
+        -- TODO: simplify - copy from 32 bit register eax 4 bytes in 1 shot
+        x86 $ do
+            mov (derefOffset rax (-4)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-2)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-3)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-1)) bl
+
+       
 -- (w64 dict_address:w64 n -- :)
 defineEMITCALL :: Lang () 
 defineEMITCALL = defFunBasic "EMIT_CALL" undefined body
@@ -1185,11 +1264,11 @@ defineEMITCALL = defFunBasic "EMIT_CALL" undefined body
         ppop rax
         x86 $ mov rax (derefOffset rax 16)
 
+        {-
         -- CALL using E8 WARNING! THis uses relative addresses!
         -- It's trickier (but we will have to optimize this probably)
         -- https://stackoverflow.com/questions/19552158
         -- rax = 00000000C00008EB
-        {-
         x86 $ do
             mov (derefOffset r9 0) (I8 0xE8)
             mov (derefOffset r9 1) al
@@ -1238,7 +1317,7 @@ defineEMITLIT = defFunBasic funName ty body
         x86 $ xor rax rax
         ppop rax -- Take the literal that we need to push and place it in rax
 
-        -- TODO: Improve language (repeated code)
+        -- TODO: Improve code (repeated code)
         doc "X86: sub RSI 8"
         x86 $ do
             mov (derefOffset r9 0) (I8 0x48)
