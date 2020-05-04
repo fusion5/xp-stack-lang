@@ -32,3 +32,7 @@ gdb_runtrace_main: main
 main.doc: asmgen
 	./asmgen doc > $@
 
+functional_test: main
+	echo def A = 1 . run A run DBG_DUMP_PTOP_64 | ./main
+	echo def A = PLUS . | ./main
+	echo def A = 1 1 PLUS . run A run DBG_DUMP_PTOP_64 | ./main

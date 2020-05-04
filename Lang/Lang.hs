@@ -72,16 +72,23 @@ defineBaseDefBodies = do
 
     defineTermHash
     defineTermLook
+    defineTermLookNohash
     defineDUP
     defineNOT
-    defineLIT
     defineEMITLIT
     defineEMITCALL
     defineEMITRET
-    defineIFPOP0
-    defineIFPEEK0
+    -- defineLIT
+    -- defineIFPOP0
+    -- defineIFPEEK0
+    
+    defineParseDef
+    defineParseIfTerms
+    defineParseIfTerm
+
     defineDbgDumpPtop64
     defineDbgDumpPtop8
+    defineDbgDumpDictionary
     defineREPL
     defineREPLDef
     defineREPLDefInt
@@ -100,7 +107,6 @@ data Dict =
           Int            -- Function name length
           String         -- Function name
           Word64         -- The address of the body of the function.
-
 
 pushSimpleDef :: String -> Lang ()
 pushSimpleDef defName = do
@@ -157,6 +163,7 @@ pushBaseDict = do
     pushSimpleDef "READ_PRINTABLES_W8"
     pushSimpleDef "DBG_DUMP_PTOP_64"
     pushSimpleDef "TERM_LOOK"
+    pushSimpleDef "TERM_LOOK_NOHASH"
     pushSimpleDef "TERM_HASH"
     pushSimpleDef "REPL"
     doc "Dictionary end marking point (LOOKUP ends here)"
@@ -273,6 +280,7 @@ appendSEQDefinition prevLabel bodyLabel = do
 -}
 
 -- This is a sort of struct of C...
+{-
 appendASMDefinition :: Maybe String -> String -> X86_64 String
 appendASMDefinition prevLabel bodyLabel = do
     docX86 $ "Dictionary entry for " ++ bodyLabel
@@ -301,7 +309,9 @@ appendASMDefinition prevLabel bodyLabel = do
     imm64 $ fromIntegral $ length bodyLabel
     asm $ bflush
     return x
+-}
 
+{-
 pushASMDef :: String -> Lang ()
 pushASMDef bodyLabel = do
     doc $ "ASM Dictionary entry for " ++ bodyLabel
@@ -329,7 +339,9 @@ pushASMDef bodyLabel = do
     doc "It should be an invariant that the parameter stack top,"
     doc "rsi is always >= r11."
     x86 $ mov r11 rsi
+-}
 
+{-
 pushSeqItem :: [SeqParam] -> SeqInstr -> Lang ()
 pushSeqItem _  (SeqDefTerm term) = do
     doc "Push the term to look up"
@@ -363,6 +375,7 @@ pushSeqItem params (SeqDefParam term) = do
         -- a parameter from the call stack
         -- (2020-02-28)
     where paramOffsets = computeOffsets params
+-}
 
 computeOffsets :: [(String, Type)] 
                -> [(String, Word32)]
@@ -381,6 +394,7 @@ accum = a 0
 
 -- In the end this function will have to be implemented in the language
 -- itself...
+{-
 pushSEQDef :: String 
            -> [SeqParam] 
            -> [SeqInstr] 
@@ -425,6 +439,7 @@ pushSEQDef bodyLabel params calls = do
     ppush r11
     doc $ "Advance the dictionary:"
     x86 $ mov r11 rsi
+-}
 
 defineDUP :: Lang () 
 defineDUP = defFunBasic funName ty body
@@ -454,23 +469,52 @@ defineNOT = defFunBasic funName ty body
         ppush $ I32 0
         x86 $ ret
 
-
--- Type : -> :w64:w64
--- Func : -> :term_address:success_or_failure
-defineTermLook :: Lang ()
-defineTermLook = defFunBasic funName ty body
+defineDbgDumpDictionary :: Lang ()
+defineDbgDumpDictionary = defFunBasic "DBG_DUMP_DICTIONARY" undefined body
   where
-    funName = "TERM_LOOK"
+    body = do
+        doc "Dump dictionary"
+        doc "Backup registers"
+        ppush rbx
+        ppush rcx
+
+        writeMsgHelper "Dictionary\n"
+        writeMsgHelper "----------\n"
+        x86 $ mov rbx r11
+        x86 $ asm $ setLabel "DBG_DUMP_DICTIONARY_LOOP"
+        do
+            x86 $ cmp rbx $ I32 0
+            x86 $ jeNear "DBG_DUMP_DICTIONARY_END"
+
+            x86 $ mov rcx (derefOffset rbx 8)
+            ppush rcx
+            x86 $ callLabel "DBG_DUMP_PTOP_64"
+            pdrop 1
+
+            doc "Advance the dictionary to the following item (def.prev)"
+            x86 $ mov rbx (derefOffset rbx 0) 
+
+            x86 $ jmpLabel "DBG_DUMP_DICTIONARY_LOOP"
+        setLabel "DBG_DUMP_DICTIONARY_END"
+
+        writeMsgHelper "----------\n"
+        doc "Restore register backups"
+        ppop rcx
+        ppop rbx
+
+-- Same as TermLook but it doesn't hash.
+defineTermLookNohash :: Lang ()
+defineTermLookNohash = defFunBasic funName ty body
+  where
+    funName = "TERM_LOOK_NOHASH"
     ty      = undefined
     body    = do
         doc "Lookup a term in the dictionary."
-        doc "Compute the term hash."
-        x86 $ callLabel "TERM_HASH"
+        doc "Use the hash given on the stack."
         doc "Traverse the dictionary using rax until we find"
         doc "either the emtpy dictionary or the term."
-        doc ""
-        doc "rax now holds the hash we're looking for."
         ppop rax 
+        doc "rax holds the hash we're looking for."
         x86 $ mov rbx r11 -- Begin from the dictionary top.
         x86 $ asm $ setLabel "TERM_LOOK_WHILE"
         do
@@ -498,6 +542,54 @@ defineTermLook = defFunBasic funName ty body
         ppush $ I32 0
         x86 $ ret
 
+-- Type : -> :w64:w64
+-- Func : -> :term_address:success_or_failure
+defineTermLook :: Lang ()
+defineTermLook = defFunBasic funName ty body
+  where
+    funName = "TERM_LOOK"
+    ty      = undefined
+    body    = do
+        doc "Lookup a term in the dictionary."
+        doc "Compute the term hash."
+        x86 $ callLabel "TERM_HASH"
+        doc "Traverse the dictionary using rax until we find"
+        doc "either the emtpy dictionary or the term."
+        doc ""
+        doc "rax now holds the hash we're looking for."
+
+        x86 $ callLabel "TERM_LOOK_NOHASH"
+        {-
+        ppop rax 
+        x86 $ mov rbx r11 -- Begin from the dictionary top.
+        x86 $ asm $ setLabel "TERM_LOOK_WHILE"
+        do
+            x86 $ cmp rbx $ I32 0
+            x86 $ jeNear "TERM_LOOK_NOT_FOUND"
+
+            doc "Take the current dictionary entry hash: def.hash"
+            x86 $ mov rcx (derefOffset rbx 8)
+            x86 $ cmp rcx rax
+            x86 $ jeNear "TERM_LOOK_FOUND"
+            
+            doc "Advance the dictionary to the following item (def.prev)"
+            x86 $ mov rbx (derefOffset rbx 0) 
+
+            x86 $ jmpLabel "TERM_LOOK_WHILE"
+        x86 $ asm $ setLabel "TERM_LOOK_FOUND"
+        doc "Found! Return the matching dictionary address"
+        ppush rbx 
+        ppush $ I32 1
+        x86 $ ret
+
+        x86 $ asm $ setLabel "TERM_LOOK_NOT_FOUND"
+        doc "Not found! indicate that there is an error."
+        ppush $ I32 0
+        ppush $ I32 0
+        x86 $ ret
+    -}
+
+{-
 defineIFPEEK0 :: Lang ()
 defineIFPEEK0 = defFunBasic funName ty body
   where
@@ -549,6 +641,7 @@ defineLIT = defFunBasic funName ty body
         x86 $ mov rax (derefOffset r8 0)
         ppush rax
         x86 $ ret
+-}
 
 -- Type: :w8 :..:w8   :w64 -> w64                                :w64
 -- Func: :w_0:..:w_n-1:n   -> (w_n-1 + w_n-2*10 + ... w_0*10^n-1):success
@@ -620,6 +713,239 @@ defineREPLDefInt = defFunBasic "PARSEINT" undefined body
         ppush $ I32 0
         x86 $ ret
 
+defineParseDef :: Lang () 
+defineParseDef = defFunBasic "PARSE_DEF" undefined body
+  where 
+    body = do
+        doc "An example of input that this function can parse from"
+        doc "stdin is: 'ADD_2 = 2 PLUS .'"
+
+        x86 $ callLabel "READ_PRINTABLES_W8"
+        assertPtop 1 "Could not read the term to define!\n"
+        pdrop 1
+        x86 $ callLabel "TERM_HASH"
+
+        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
+        doc "for the new dictionary entry..."
+        doc "In case of an error, (e.g. a missing term or an integer " 
+        doc "overflow, then this is rolled back in REPL_DEF_ERROR_ROLLBACK:"
+        ppush r9  -- addr
+        ppush rax -- name hash 
+        ppush r11 -- prev dict. entry
+
+        -- x86 $ callLabel "DBG_DUMP_DICTIONARY"
+        doc "Set the new list pointer r11, to the stack top:"
+        x86 $ mov r11 rsi
+        -- x86 $ callLabel "DBG_DUMP_DICTIONARY"
+
+        doc "Read a char, and ensure it is the equal sign:"
+        x86 $ callLabel "READ_HEAD_W8"
+        assertPtop 1 "Could not read a printable char!\n"
+        pdrop 1
+
+        x86 $ xor rax rax
+        ppopW8 al
+        doc "The ascii code for '=' is 0x3D"
+        x86 $ cmp rax $ I32 0x3D
+        x86 $ jneNear "PARSE_DEF_ERROR"      
+
+        x86 $ callLabel "PARSE_IF_TERMS"
+        -- TODO: Handle failure better
+        -- assertPtop 1 "Parse failure, handle me (don't make quit)!"
+        pdrop 1
+        
+        doc "Expect a dot to be on the stack at the end of a definition:"
+        x86 $ xor rax rax
+        ppopW8 al
+        doc "The ascii code for '.' is 0x2E"
+        x86 $ cmp rax $ I32 0x2E
+        x86 $ jneNear "PARSE_DEF_ERROR"
+        
+        ppush $ I32 1
+        x86 $ ret
+
+        setLabel "PARSE_DEF_ERROR"
+        doc "Restore the previous state from the stack data:"
+        ppop  r11 -- prev
+        pdrop 1   -- name hash, don't care
+        ppop  r9  -- addr
+
+        ppush $ I32 0
+        x86 $ ret
+
+defineParseIfTerms :: Lang ()
+defineParseIfTerms = defFunBasic "PARSE_IF_TERMS" undefined body
+  where
+    body = do
+        doc "Call PARSE_IF_TERM in a loop"
+        setLabel "PARSE_IF_TERMS_LOOP"
+        x86 $ callLabel "PARSE_IF_TERM"
+        -- Check for success
+        ppop rax
+        x86 $ cmp rax $ I32 0
+        x86 $ jeNear "PARSE_IF_TERMS_TERMINATE"
+        x86 $ jmpLabel "PARSE_IF_TERMS_LOOP"
+
+        setLabel "PARSE_IF_TERMS_TERMINATE"
+        ppush $ I32 0
+        x86 $ ret
+
+defineParseIfTerm :: Lang ()
+defineParseIfTerm = defFunBasic "PARSE_IF_TERM" undefined body
+  where
+    body = do
+        doc "Parse a term, possibly an IF term."
+
+        x86 $ callLabel "READ_HEAD_W8"
+        assertPtop 1 "READ_HEAD_W8 failed\n"
+        pdrop 1
+
+        doc "Patern match on the first character that was read "
+        doc "i.e. the stack top / the result of READ_HEAD_W8 / rax:"
+
+        x86 $ xor rax rax
+        ppeerW8 0 al
+
+        doc "Is the char greater than ascii code 9?"
+        x86 $ cmp rax $ I32 0x39
+        x86 $ jgNear "PARSE_IF_TERM_NOT_NUMERIC"
+
+        doc "Is the char less than ascii code 0?"
+        x86 $ cmp rax $ I32 0x30 
+        x86 $ jlNear "PARSE_IF_TERM_NOT_NUMERIC"
+
+        do 
+            doc "Our term starts with 0-9. Therefore, "
+            doc "attempt to parse a positive integer literal."
+            doc "Read the rest of the input, until whitespace ..."
+            x86 $ callLabel "READ_TAIL_W8"
+            assertPtop 1 "READ_TAIL_W8 was not successful!"
+            pdrop 1
+
+            ppop rbx
+            x86 $ inc rbx
+            ppush rbx
+
+            x86 $ callLabel "PARSEINT"
+            ppop rax
+            x86 $ cmp rax $ I32 1
+            x86 $ jneNear "PARSE_IF_TERM_INT_ERROR"
+            doc "Emit the JIT literal that was just entered."
+            x86 $ callLabel "EMIT_LIT_64"
+            doc "Parse successful."
+            ppush $ I32 1
+            x86 $ ret
+
+        setLabel "PARSE_IF_TERM_NOT_NUMERIC"
+
+        doc "Is the char less than ascii code A?"
+        x86 $ cmp rax $ I32 0x41
+        x86 $ jlNear "PARSE_IF_TERM_NOT_ALPHABET"
+
+        doc "Is the char greater than ascii code Z?"
+        x86 $ cmp rax $ I32 0x5A
+        x86 $ jgNear "PARSE_IF_TERM_NOT_ALPHABET"
+
+        do
+            doc "Parsing a word that starts with A-Z."
+            doc "Place the rest of the input to the stack..."
+            x86 $ callLabel "READ_TAIL_W8"
+            assertPtop 1 "READ_TAIL_W8 was not successful!"
+            pdrop 1
+
+            doc "Increment top to account for the READ_HEAD_W8 character too"
+            ppop rbx
+            x86 $ inc rbx
+            ppush rbx
+
+            x86 $ callLabel "TERM_HASH"
+            ppeek rax
+            x86 $ mov rbx (I64 $ fnv1s "IF0")
+            x86 $ cmp rax rbx
+            x86 $ jneNear "PARSE_IF_TERM_NOT_IF0"
+
+            doc "Parsing an IF0. After it there should be a '{'"
+            
+            x86 $ callLabel "READ_HEAD_W8"
+            assertPtop 1 "READ_HEAD_W8 failed\n"
+            pdrop 1
+            x86 $ xor rax rax
+            ppeerW8 0 al
+            x86 $ cmp rax $ I32 0x7B -- {
+            x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_OPEN"
+
+            x86 $ callLabel "PARSE_IF_TERMS"
+            pdrop 1 -- Ignore whether PARSE_IF_TERMS had a parse error or not
+
+            doc "After PARSE_IF_TERMS returns there should be a '}'"
+            x86 $ xor rax rax
+            ppeerW8 0 al
+            x86 $ cmp rax $ I32 0x7D -- }
+            x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
+
+        setLabel "PARSE_IF_TERM_NOT_IF0"
+        do
+            -- x86 $ callLabel "DBG_DUMP_PTOP_64"
+            -- x86 $ callLabel "DBG_DUMP_DICTIONARY"
+
+            doc "Parse a term other than IF0"
+            x86 $ callLabel "TERM_LOOK_NOHASH"
+
+            doc "Check for an unknown term (do nothing in that case)."
+            ppop rax
+            x86 $ cmp rax $ I32 0
+            x86 $ jeNear "PARSE_IF_TERM_UNDEFINED"
+            
+            doc "Successful term read, emit a call command to the"
+            doc "term address:"
+            x86 $ callLabel "EMIT_CALL"
+
+            ppush $ I32 1
+            x86 $ ret
+
+        setLabel "PARSE_IF_TERM_NOT_ALPHABET"
+        ppush $ I32 0
+        x86 $ ret
+
+        setLabel "PARSE_IF_TERM_UNDEFINED"
+        writeMsgHelper "L.880 Undefined term!\n"
+        ppush $ I32 0
+        x86 $ ret
+
+        setLabel "PARSE_IF_TERM_NO_CURLY_BRACE_OPEN"
+        setLabel "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
+        writeMsgHelper "Curly brace errors (open or close missing)!\n"
+        ppush $ I32 0
+        x86 $ ret
+
+        setLabel "PARSE_IF_TERM_INT_ERROR"
+        pdrop 1
+        writeMsgHelper "Integer parse error!\n"
+        ppush $ I32 0
+        x86 $ ret
+        
+defineREPLDef :: Lang ()
+defineREPLDef = defFunBasic "REPL_DEF" undefined body
+  where
+    body = do
+        doc "This is the REPL functionality that parses new definitions."
+        doc "It is not part of the dictionary, it's"
+        doc "only a procedure called from the REPL function when the "
+        doc "'def' command is issued."
+
+        x86 $ callLabel "PARSE_DEF"
+        ppop rax
+        x86 $ cmp rax $ I32 0
+        x86 $ jeNear "REPL_DEF_FAIL"
+
+        x86 $ callLabel "EMIT_RET"
+        writeMsgHelper  "Definition added.\n"
+        x86 $ ret
+
+        setLabel "REPL_DEF_FAIL"
+        writeMsgHelper "Definition failed!\n"
+        x86 $ ret
+{-
 defineREPLDef :: Lang ()
 defineREPLDef = defFunBasic "REPL_DEF" undefined body
   where
@@ -680,7 +1006,7 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         x86 $ xor rax rax
         ppeerW8 0 al
 
-        doc "Is the char a dot? Then end the definition succesffuly."
+        doc "Is the char a dot? Then end the definition succesfully."
         x86 $ cmp rax $ I32 0x2E
         x86 $ jeNear "REPL_DEF_READ_TERMS_LOOP_END"
 
@@ -692,62 +1018,80 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         x86 $ cmp rax $ I32 0x30 
         x86 $ jlNear "REPL_DEF_NOT_NUMERIC"
 
-        doc "Our term starts with 0-9. Therefore, "
-        doc "attempt to parse a positive integer literal."
+        do
+            doc "Our term starts with 0-9. Therefore, "
+            doc "attempt to parse a positive integer literal."
+            doc "Read the rest of the input, until whitespace ..."
+            x86 $ callLabel "READ_TAIL_W8"
+            assertPtop 1 "READ_TAIL_W8 was not successful!"
+            pdrop 1
 
-        -- Read the rest of the input, until whitespace ...
-        x86 $ callLabel "READ_TAIL_W8"
-        assertPtop 1 "READ_TAIL_W8 was not successful!"
-        pdrop 1
+            ppop rbx
+            x86 $ inc rbx
+            ppush rbx
 
-        ppop rbx
-        x86 $ inc rbx
-        ppush rbx
+            x86 $ callLabel "PARSEINT"
+            ppop rax
+            x86 $ cmp rax $ I32 1
+            x86 $ jeNear "PARSEINT_OK"
+            writeMsgHelper "Integer parse error!\n"
+            doc "Drop the dummy parseint result"
+            pdrop 1
+            x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
+            setLabel "PARSEINT_OK"
 
-        x86 $ callLabel "PARSEINT"
-        ppop rax
-        x86 $ cmp rax $ I32 1
-        x86 $ jeNear "PARSEINT_OK"
-        writeMsgHelper "Integer parse error!\n"
-        doc "Drop the dummy parseint result"
-        pdrop 1
-        x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
-        setLabel "PARSEINT_OK"
+            doc "Emit the JIT literal that was just entered."
+            x86 $ callLabel "EMIT_LIT_64"
 
-        doc "Emit the JIT literal that was just entered."
-        x86 $ callLabel "EMIT_LIT_64"
-
-        doc "Move on to the next term."
-        x86 $ jmpLabel "REPL_DEF_READ_TERMS_LOOP"
+            doc "Move on to the next term."
+            x86 $ jmpLabel "REPL_DEF_READ_TERMS_LOOP"
 
         x86 $ asm $ setLabel "REPL_DEF_NOT_NUMERIC"
 
-        doc "Place the rest of the input to the stack..."
-        x86 $ callLabel "READ_TAIL_W8"
-        assertPtop 1 "READ_TAIL_W8 was not successful!"
-        pdrop 1
+        do
+            doc "Place the rest of the input to the stack..."
+            x86 $ callLabel "READ_TAIL_W8"
+            assertPtop 1 "READ_TAIL_W8 was not successful!"
+            pdrop 1
 
-        doc "Increment rbx to account for the READ_HEAD_W8 character too"
-        ppop rbx
-        x86 $ inc rbx
-        ppush rbx
+            doc "Increment rbx to account for the READ_HEAD_W8 character too"
+            ppop rbx
+            x86 $ inc rbx
+            ppush rbx
 
-        x86 $ callLabel "TERM_LOOK"
-        ppop rax
-        x86 $ cmp rax $ I32 1
-        x86 $ jeNear "TERM_LOOK_OK"
-        writeMsgHelper "Term not found!\n"
-        pdrop 1 -- Drop the dummy TERM_LOOK result...
-        x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
-        setLabel "TERM_LOOK_OK"
-        -- ppop rax
-        -- x86 $ cmp rax (I32 0)
-        -- x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
+            -- TODO: Check if the term is called 'IF0'. If it is, then
+            -- emit the first part of the IF (with a hole).
+            -- Then call READ_DEF_BODY in a loop, until we reach ENDIF.
+            -- Then, emit the last part of the IF and fill the hole from
+            -- the first part of the IF with the current value of register
+            -- r9.
 
-        doc "Successful term read, emit a call command to the"
-        doc "term address:"
-        x86 $ callLabel "EMIT_CALL"
-        x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
+            -- Is the term an ENDIF?
+            -- Pop from the pstack the hole we need to fill;
+            -- fill it with the current F9;
+            -- Go to REPL_DEF_READ_TERMS_LOOP
+
+            -- Is the term equal to IF0?
+            -- Emit JIT code.
+            -- Push on the pstack the address of the hole we need to fill;
+            -- Go to REPL_DEF_READ_TERMS_LOOP
+            
+            x86 $ callLabel "TERM_LOOK"
+            ppop rax
+            x86 $ cmp rax $ I32 1
+            x86 $ jeNear "TERM_LOOK_OK"
+            writeMsgHelper "Term not found!\n"
+            pdrop 1 -- Drop the dummy TERM_LOOK result...
+            x86 $ jmpLabel "REPL_DEF_ERROR_ROLLBACK"
+            setLabel "TERM_LOOK_OK"
+            -- ppop rax
+            -- x86 $ cmp rax (I32 0)
+            -- x86 $ je "REPL_DEF_READ_TERMS_LOOP_END"
+
+            doc "Successful term read, emit a call command to the"
+            doc "term address:"
+            x86 $ callLabel "EMIT_CALL"
+            x86 $ jmpLabel  "REPL_DEF_READ_TERMS_LOOP"
 
         doc "Where we break from the read loop:"
         x86 $ asm $ setLabel "REPL_DEF_READ_TERMS_LOOP_END"
@@ -763,6 +1107,7 @@ defineREPLDef = defFunBasic "REPL_DEF" undefined body
         ppop  r9  -- addr
         writeMsgHelper "Definition failed!\n"
         x86 $ ret
+-}
 
 defineREPL :: Lang ()
 defineREPL = defFunBasic "REPL" undefined body
@@ -823,9 +1168,8 @@ defineREPL = defFunBasic "REPL" undefined body
         x86 $ asm $ setLabel "REPL_RUN_UNDEFINED"
         assertPtop 0 "TERM_LOOK failed so the result should be 0."
         pdrop 1 -- Drop the 0 From TERM_LOOK
-        writeMsgHelper "Undefined term!\n"
+        writeMsgHelper "L.1158 Undefined term!\n"
         x86 $ jmpLabel "REPL_START"
-         
 
         x86 $ asm $ setLabel "REPL_QUIT"
         
@@ -1249,8 +1593,14 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
   where
     ty = TyFunc "DBG_DUMP_PTOP_64" baseWord baseWord
     body = do
+        doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the top of the stack."
-        ppeek rax
+        ppush rax
+        ppeer 1 rax
+        ppush rbx
+        ppush rcx
+        ppush rdx
+
         doc "A 64 bit value needs 16 chars to be printed. RCX is the counter."
         x86 $ mov rcx $ I64 16 
 
@@ -1292,6 +1642,11 @@ defineDbgDumpPtop64 = defFunBasic "DBG_DUMP_PTOP_64" ty body
         x86 $ callLabel "WRITE_CHAR"
         pdrop 1
 
+        doc "Restore registers from the backup so as not to affect the caller"
+        ppop rdx
+        ppop rcx
+        ppop rbx
+        ppop rax
 
 -- http://man7.org/linux/man-pages/man2/write.2.html
 -- Type :w64 -> :int
