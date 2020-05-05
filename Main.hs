@@ -100,7 +100,7 @@ mainLang = do
     x86 $ initDynamicDefinitionsMemory
 
     -- Program entry point
-    let mainTerm = "REPL"
+    let mainTerm = "repl"
     ppushStr mainTerm
     ppushI32 $ length mainTerm
     x86 $ callLabel "TERM_LOOK"
@@ -122,7 +122,7 @@ mainLang = do
 
     doc "Call REPL:"
     x86 $ call rax
-    x86 $ callLabel "EXIT"
+    x86 $ callLabel "exit"
 
     defineBaseDefBodies
 
