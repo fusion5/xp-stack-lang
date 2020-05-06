@@ -71,10 +71,30 @@ initDynamicDefinitionsMemory = do
     mov rbx rax -- An rbx of the program break means that we wish to extend the
                 -- program break
     add rbx (I32 10000) -- by 10k bytes
-    mov rax (I64 linux_sys_brk)    -- brk syscall
+    mov rax (I64 linux_sys_brk)
     int
-    docX86 "We've successfully allocated the memory for definitions in r9."
-    docX86 "Apparently it's writeable and executable by default."
+    doc "We've successfully allocated the memory for definitions in r9."
+    doc "Apparently it's writeable and executable by default."
+
+initDictionaryMemory :: X86_64 ()
+initDictionaryMemory = do
+    doc "Allocate memory for the dictionary."
+    mov rax (I64 linux_sys_brk)
+    mov rbx (I64 0) -- An rbx of 0 means that brk() returns the program break.
+    int
+    doc "rax now holds the program break."
+    mov r11 rax
+    doc "r11 is our dictionary linked list end position pointer."
+    
+    mov rbx rax
+    add rbx (I32 10000) -- 10k bytes for the dictionary linked list
+    mov rax (I64 linux_sys_brk)
+    int
+    doc "We've successfully allocated memory for the dictionary linked list."
+    doc "Add a first, dummy, empty term to mark the end of the list"
+    mov (derefOffset r11 0)  (I32 0)
+    mov (derefOffset r11 8)  (I32 0)
+    mov (derefOffset r11 16) (I32 0)
 
 mainLang = do
     doc "Read from stdin the dict. entry that we should interpret."
@@ -95,6 +115,7 @@ mainLang = do
     -- assertPtop (fromIntegral $ fnv1 [0x61, 0x62, 0x63]) 
     --    "The hash should match the one computed in HS"
 
+    x86 $ initDictionaryMemory
     pushBaseDict
 
     x86 $ initDynamicDefinitionsMemory

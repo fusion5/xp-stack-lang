@@ -33,14 +33,14 @@ main.doc: asmgen
 	./asmgen doc > $@
 
 functional_test: main
-	echo def A = 1 . run A run DBG_DUMP_PTOP_64 | ./main
-	echo def A = PLUS . | ./main
-	echo def A = 1 1 PLUS . run A run DBG_DUMP_PTOP_64 | ./main
+	# echo def a = 1 . run a run dbg_dump_ptop_64 | ./main
+	# echo def a = plus . | ./main
+	# echo def a = 1 1 plus . run a run dbg_dump_ptop_64 | ./main
 	cat if0_1.program | ./main
 	cat if0_2.program | ./main
 	cat factorial.program | ./main
 
-%.gdb_trace: %.program
+%.gdb_trace: %.program main
 	printf "set confirm off \n\
 		set logging on \n\
 		set logging file $@ \n\
@@ -51,5 +51,5 @@ functional_test: main
 		starti < $< \n\
 		while 1 \n\
 		stepi \n\
-		end" # | gdb ./main
+		end" | gdb ./main
 
