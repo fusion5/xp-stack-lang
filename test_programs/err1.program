@@ -1,0 +1,3 @@
+def FAC  = DUP .
+def MAIN = FAC .
+q

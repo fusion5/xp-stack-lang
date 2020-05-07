@@ -1,0 +1,28 @@
+def push_is1 =
+    dup
+    1
+    minus
+.
+
+def factorial = 
+    dup 1 minus
+    if0 {
+        drop
+        1
+        return 
+    }
+    drop
+    dup dec
+    factorial
+    times
+.
+
+def main = 
+    6
+    factorial
+    dbg_dump_ptop_64
+    120
+    minus
+.
+run main
+q

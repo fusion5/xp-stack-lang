@@ -1,0 +1,10 @@
+def a = 
+    1 if0 { 2 } 
+.
+def main = 
+    a
+    1
+    minus
+.
+run main
+q

@@ -1,0 +1,30 @@
+def test_expect_good = 
+    read_head_w8
+    drop
+
+    parse_identifier
+    2 minus
+    dbg_dump_ptop_64
+.
+def test_expect_bad = 
+    read_head_w8
+    drop
+
+    parse_identifier
+    1 minus
+    dbg_dump_ptop_64
+.
+
+run test_expect_good
+n
+
+run test_expect_good
+nice
+
+run test_expect_bad
+3
+
+run test_expect_bad
+{
+
+q

@@ -1,0 +1,8 @@
+def main = 
+    ppush1
+    :w64 n :w64 m -
+    ppush1
+    plus
+.
+run main
+q

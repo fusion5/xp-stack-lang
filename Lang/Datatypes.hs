@@ -14,6 +14,9 @@ import Control.Monad.Trans.State
 
 type Lang = StateT LangState (X86_64)
 
+instance Documentation Lang where
+    doc = x86 . doc
+
 -- This might not be needed in the end, because types will
 -- not be considered at compile time...
 data LangState = LangState

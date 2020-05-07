@@ -23,6 +23,8 @@ import Lang.Datatypes
 import Lang.Types
 import Lang.Debug
 import Lang.Linux
+import Lang.BasicFunctions
+
 import Data.Bits
 
 import Data.Maybe (listToMaybe)

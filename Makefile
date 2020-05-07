@@ -2,6 +2,7 @@
 asmgen: ELFHeader.hs Main.hs \
  ASM/ASM.hs ASM/Datatypes.hs ASM/Pretty.hs \
  Lang/Datatypes.hs Lang/Lang.hs Lang/Linux.hs Lang/Types.hs \
+ Lang/BasicFunctions.hs Lang/TestParser.hs \
  X86/Datatypes.hs X86/X86.hs X86/Tests.hs
 	ghc Main.hs -o $@
 
@@ -33,12 +34,19 @@ main.doc: asmgen
 	./asmgen doc > $@
 
 functional_test: main
-	# echo def a = 1 . run a run dbg_dump_ptop_64 | ./main
-	# echo def a = plus . | ./main
-	# echo def a = 1 1 plus . run a run dbg_dump_ptop_64 | ./main
-	cat if0_1.program | ./main
-	cat if0_2.program | ./main
-	cat factorial.program | ./main
+	@echo No warnings or errors means PASS.
+	@echo -----
+	@# echo def a = 1 . run a run dbg_dump_ptop_64 q | ./main
+	@# echo def a = plus . q | ./main
+	@# echo def a = 1 1 plus . run a run dbg_dump_ptop_64 q | ./main
+	@cat test_programs/if0_1.program | ./main
+	@cat test_programs/if0_2.program | ./main
+	@cat test_programs/factorial.program | ./main
+
+parser_test: main
+	@echo 0 means PASS, anything else is FAIL.
+	@echo -----
+	@./main < test_programs/test_suite_parse_identifier.program 
 
 %.gdb_trace: %.program main
 	printf "set confirm off \n\

@@ -1,0 +1,50 @@
+def between =
+
+    :w64 n1 :w64 n2 :w64 n3         => :n1 :n2 :n3 :n1 :n3
+        ppeer 24 rax -- put n1 into rax
+        ppush rax    -- append rax.
+
+    :w64 n1 :w64 n2 :w64 n3 :w64 n1 -> :n1 :n2 :n1 :n3
+        -- calculate permutations (swaps) as suggested by Knuth's algorithm,
+        -- and perform them. in this case we do
+        swap n3 n1
+        
+
+
+    EXAMPLE
+
+    :w8 n1 :w64 n2 :w64 n3 -> :n1 :n2 :n1 :n3
+
+    (It's not significant that we're using the call stack, it
+    just happens to be available here; it will be freed afterwards).
+    ppop_to_cstack w64 -- move to call stack n3
+    ppop_to_cstack w64 -- move to call stack n2
+    ppop_to_cstack w8  -- move to call stack n1
+
+    the cstack has :n3 :n2 :n1 on it.
+    [n3 8 bytes][n2 8 bytes][n1 1 byte]
+    Offsets:
+    [-17       ][-9        ][-1]
+
+    ppush_from_cstack w8  [rsp - 1]  -- copy n1 from callstack onto the pstack
+    ppush_from_cstack w64 [rsp - 9]  -- copy n2 from callstack onto the pstack.
+    ppush_from_cstack w8  [rsp - 1]  -- copy n1 from callstack onto the pstack
+    ppush_from_cstack w64 [rsp - 17] -- copy n3 from callstack onto the pstack.
+    
+    cdrop 17 -- drop n1, n2 and n3 from the call stack.
+
+    ?? What if a pstack parameter has a dynamic size?
+    ?? what would happen if we had strings?
+    :char[] my_str[n] -> :my_str[n] :n :n
+
+    Doesn't rewriting already deal with this sort of stuff?
+
+    We'd have to do a ppop_to_cstack_n sort of thing, which will behave
+    like memcpy (this would be expensive).
+
+    gt
+    :w64 n1 :w64 n2 :w64 is_gt -> :is_gt :n1 :n2
+    lt
+    and
+.
+q
