@@ -16,13 +16,16 @@ def test_expect_bad =
 .
 
 run test_expect_good
-n
+a
+
+run test_expect_good
+z
 
 run test_expect_good
 nice
 
 run test_expect_bad
-3
+`
 
 run test_expect_bad
 {

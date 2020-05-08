@@ -1,0 +1,45 @@
+def function_under_test = parse_numeric .
+
+def test_expect_good = 
+    read_head_w8
+    drop
+
+    function_under_test
+    2 minus
+    dbg_dump_ptop_64
+.
+def test_expect_reject = 
+    read_head_w8
+    drop
+
+    function_under_test
+    1 minus
+    dbg_dump_ptop_64
+.
+def test_expect_fail = 
+    read_head_w8
+    drop
+
+    function_under_test
+    dbg_dump_ptop_64
+.
+
+run test_expect_good
+2
+
+run test_expect_good
+123
+
+run test_expect_good
+0
+
+run test_expect_good
+9
+
+run test_expect_reject
+/
+
+run test_expect_reject
+:
+
+q
