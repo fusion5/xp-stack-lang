@@ -123,10 +123,10 @@ r13 = R64 RR13
 r14 = R64 RR14
 r15 = R64 RR15
 
-al = R8 AL
-cl = R8 CL
-dl = R8 DL
-bl = R8 BL
+al  = R8 AL
+cl  = R8 CL
+dl  = R8 DL
+bl  = R8 BL
 
 index8 :: Reg8 -> Word8
 index8 x = case x of

@@ -98,6 +98,22 @@ initDictionaryMemory = do
     mov (derefOffset r11 8)  (I32 0)
     mov (derefOffset r11 16) (I32 0)
 
+initScratchSpaceMemory :: X86_64 ()
+initScratchSpaceMemory = do
+    doc "Allocate memory for use during reordering of stack parameters."
+    doc "The top of this memory segment is saved into rdi."
+    mov rax (I64 linux_sys_brk)
+    mov rbx (I64 0) -- An rbx of 0 means that brk() returns the program break.
+    int
+    doc "rax now holds the program break. Save it into special purpose register"
+    doc "rdi ."
+    mov rdi rax
+
+    mov rbx rax
+    add rbx (I32 10000) -- 10k bytes for the scratch space
+    mov rax (I64 linux_sys_brk)
+    int
+
 mainLang = do
     doc "Read from stdin the dict. entry that we should interpret."
 
@@ -121,13 +137,17 @@ mainLang = do
     pushBaseDict
 
     x86 $ initDynamicDefinitionsMemory
+    x86 $ initScratchSpaceMemory
 
     -- Program entry point
     let mainTerm = "repl"
+ 
+    -- x86 $ callLabel "read_head_w8"
+    -- let mainTerm = "parse_identifier"
     ppushStr mainTerm
     ppushI32 $ length mainTerm
     x86 $ callLabel "TERM_LOOK"
-    assertPtop 1 "REPL dictionary entry must be in the dictionary!"
+    assertPtop 1 "REPL dictionary entry must be in the dictionary!\n"
     doc "Drop the success return code of TERM_LOOK:"
     pdrop 1
     doc "Now take the '.addr' field from the dictionary term found by "
@@ -145,6 +165,7 @@ mainLang = do
 
     doc "Call REPL:"
     x86 $ call rax
+
     x86 $ callLabel "exit"
 
     defineBaseDefBodies

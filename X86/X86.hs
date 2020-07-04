@@ -10,7 +10,7 @@ import Data.Word
 import Data.Bits
 import Data.Binary.Put (putWord64le, putWord32le)
 import Data.Int
-
+import Data.Char (ord)
 
 -- Documentation at the X86 programming level (asm instructions)
 
@@ -516,3 +516,5 @@ xor o1@(R64 dst) o2@(R64 src) = do -- REX.W + 31 /r | XOR r/m64, r64
     emit1 $ mrmByte o2 o1
     asm bflush
 
+asciiI32 :: Char -> Val
+asciiI32 = I32 . fromIntegral . ord

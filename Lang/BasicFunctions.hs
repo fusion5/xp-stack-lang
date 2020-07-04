@@ -49,6 +49,9 @@ ppop dst64@(R64 _) = do
     doc $ "ppop " ++ show dst64
     x86 $ mov dst64 $ derefOffset rsi 0
     x86 $ add rsi $ I32 8
+ppop dst@(R8 _) = x86 $ do
+    mov dst $ derefOffset rsi 0
+    add rsi $ I32 1
 
 ppeek = ppeer 0
 
@@ -65,9 +68,9 @@ ptopW8 :: Val -> Lang ()
 ptopW8 = ppeerW8 0
 
 ppopW8 :: Val -> Lang ()
-ppopW8 dst@(R8 reg) = x86 $ do
+ppopW8 dst@(R8 reg) = ppop dst {- x86 $ do
     mov dst $ derefOffset rsi 0
-    add rsi $ I32 1
+    add rsi $ I32 1 -}
 
 cpeerW8 :: Int32 -> Val -> X86_64 ()
 cpeerW8 numW8s dst =
@@ -106,6 +109,56 @@ ppush v | supported v = do
           supported (R64 _) = True
           supported _ = False
 ppush v = error $ "ppush doesn't support " ++ show v
+
+-- Scratch stack push
+spush :: Val -> Lang ()
+spush v | supported v = do
+    doc $ "spush " ++ show v
+    x86 $ sub rdi $ I32 $ sz v
+    x86 $ mov (derefOffset rdi 0) v
+    where sz (I64 _)    = 8
+          sz (R64 _)    = 8
+          sz (RR64 _ _) = 8
+          sz (L64 _)    = 8
+          sz (I32 _)    = 8
+          sz (I8 _)     = 1
+          sz (R8 _)     = 1
+          supported (I8 _)  = True
+          supported (R8 _)  = True
+          supported (I32 _) = True
+          supported (R64 _) = True
+          supported _       = False
+spush v = error $ "spush doesn't support " ++ show v
+
+spop :: Val -> Lang ()
+spop dst64@(R64 _) = do
+    doc $ "spop " ++ show dst64
+    x86 $ mov dst64 $ derefOffset rdi 0
+    x86 $ add rdi $ I32 8
+spop dst@(R8 _) = x86 $ do
+    doc $ "spop " ++ show dst
+    -- TODO: Might be a bug for dst = dl
+    mov dst $ derefOffset rdi 0
+    add rdi $ I32 1
+
+cpush :: Val -> Lang ()
+cpush v | supported v = do
+    doc $ "cpush " ++ show v
+    x86 $ sub rsp $ I32 $ sz v
+    x86 $ mov (derefOffset rsp 0) v
+    where sz (I64 _)    = 8
+          sz (R64 _)    = 8
+          sz (RR64 _ _) = 8
+          sz (L64 _)    = 8
+          sz (I32 _)    = 8
+          sz (I8 _)     = 1
+          sz (R8 _)     = 1
+          supported (I8 _) = True
+          supported (R8 _) = True
+          supported (I32 _) = True
+          supported (R64 _) = True
+          supported _ = False
+cpush v = error $ "cpush doesn't support " ++ show v
 
 -- Push a string on the stack
 ppushStr :: String -> Lang ()

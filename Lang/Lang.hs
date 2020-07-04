@@ -25,6 +25,12 @@ import Data.Word
 import qualified Data.Bits as B
 import Control.Monad
 
+parse_fail         = 0 -- Parser failed and parsing should be stopped.
+parse_reject       = 1 -- Parser rejected the input. Use the specific character
+                       -- that was rejected with the next parser.
+parse_success      = 2 -- Parser succeeded and consumed all input. 
+                       -- Further input should be requested.
+
 defineBaseDefBodies = do
 
     defineCMP "eq"  je
@@ -43,9 +49,11 @@ defineBaseDefBodies = do
 
     defineRdChrLinux
     defineWrChrLinux
+    defineWrAsciiW8Linux
 
     defineRdHeadW8
     defineRdTailW8
+    defineRdTailAZW8
 
     defineTermReadLinux
 
@@ -53,22 +61,32 @@ defineBaseDefBodies = do
     defineTermLook
     defineTermLookNohash
     defineDUP
-    defineDROP
+    defineDROPW64
+    defineDROPW8
+    defineSDROPW8
+    definePPOPSPUSHW64
+    defineSPOPPPUSHW64
+    definePPOPSPUSHW8
+    defineSPEERPPUSHW64
+    definePPEERW8
+    definePPEERW64
     defineNOT
     defineDEC
     defineEMITLIT
     defineEMITCALL
-    defineEMITIF0_START
-    defineEMITIF0_END
+    defineEMITIF_START
+    defineEMITIF_END
     defineEMITRET
     -- defineLIT
     -- defineIFPOP0
     -- defineIFPEEK0
     
     defineParseIdentifier
+    defineParseNumeric
     defineParseDef
     defineParseIfTerms
     defineParseIfTerm
+
     defineParseStackParams
     defineParseStackParam
     defineParseStackRewriteTerm
@@ -142,15 +160,28 @@ pushBaseDict = do
     doc "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     -- x86 $ mov r11 $ I64 0
     pushSimpleDef "repl"
-    pushSimpleDef "dbg_dump_ptop_64"
-    pushSimpleDef "dbg_dump_ptop_8"
+    pushSimpleDef "dbg_dump_ptop_w64"
+    pushSimpleDef "dbg_dump_ptop_w8"
     pushSimpleDef "dbg_dump_dictionary"
     -- pushSimpleDef "dbg_parse_test_suite"
     pushSimpleDef "read_head_w8"
     pushSimpleDef "parse_identifier"
+    pushSimpleDef "parse_numeric"
+    pushSimpleDef "parse_if_term"
+    pushSimpleDef "parse_stack_param"
+    pushSimpleDef "parse_stack_params"
+    pushSimpleDef "parse_stack_rw_term"
     pushSimpleDef "not"
     pushSimpleDef "dec"
-    pushSimpleDef "drop"
+    pushSimpleDef "drop_w64"
+    pushSimpleDef "drop_w8"
+    pushSimpleDef "ppop_spush_w64"
+    pushSimpleDef "ppop_spush_w8"
+    pushSimpleDef "spop_ppush_w64"
+    pushSimpleDef "speer_ppush_w64"
+    pushSimpleDef "peer_w8"
+    pushSimpleDef "peer_w64"
+    pushSimpleDef "sdrop_w8"
     pushSimpleDef "dup"
     pushSimpleDef "eq"
     pushSimpleDef "lt"
@@ -166,6 +197,7 @@ pushBaseDict = do
     pushSimpleDef "pushk"
     pushSimpleDef "write_char"
     pushSimpleDef "read_char"
+    pushSimpleDef "write_ascii_w8"
 --    pushSimpleDef "read_printables_w8"
 --    pushSimpleDef "term_look"
 --    pushSimpleDef "term_look_nohash"
@@ -188,12 +220,70 @@ accum = a 0
   a _ []     = []
   a s (x:xs) = s+x : a (s+x) xs
 
-defineDROP :: Lang () 
-defineDROP = defFunBasic "drop" body
+defineDROPW64 :: Lang () 
+defineDROPW64 = defFunBasic "drop_w64" body
   where
     body    = do
         doc "Remove the top item from the stack."
         pdrop 1
+
+defineDROPW8 :: Lang () 
+defineDROPW8 = defFunBasic "drop_w8" body
+  where
+    body    = do
+        doc "Remove the top item from the stack."
+        pdropW8 1
+
+definePPOPSPUSHW64 :: Lang ()
+definePPOPSPUSHW64 = defFunBasic "ppop_spush_w64" body where
+    body = do
+        ppop  rax
+        spush rax
+
+defineSPOPPPUSHW64 :: Lang ()
+defineSPOPPPUSHW64 = defFunBasic "spop_ppush_w64" body where
+    body = do
+        spop  rax
+        ppush rax
+
+definePPOPSPUSHW8 :: Lang ()
+definePPOPSPUSHW8 = defFunBasic "ppop_spush_w8" body where
+    body = do
+        ppopW8 al
+        spush  al
+
+defineSPEERPPUSHW64 :: Lang ()
+defineSPEERPPUSHW64 = defFunBasic "speer_ppush_w64" body where
+    body = do
+        ppop  rax -- offset
+        x86 $ mov   rbx rdi
+        x86 $ add   rbx rax
+        x86 $ mov   rax (derefOffset rbx 0)
+        ppush rax
+
+definePPEERW8 :: Lang() 
+definePPEERW8 = defFunBasic "peer_w8" body where
+    body = do
+        ppop rax -- offset
+        x86 $ mov   rbx rsi
+        x86 $ add   rbx rax
+        x86 $ mov   al (derefOffset rbx 0)
+        ppush al
+
+definePPEERW64 :: Lang() 
+definePPEERW64 = defFunBasic "peer_w64" body where
+    body = do
+        ppop rax -- offset
+        x86 $ mov   rbx rsi
+        x86 $ add   rbx rax
+        x86 $ mov   rax (derefOffset rbx 0)
+        ppush rax
+
+defineSDROPW8 :: Lang ()
+defineSDROPW8 = defFunBasic "sdrop_w8" body where
+    body = do
+        ppop rax -- offset
+        x86 $ add rdi rax
 
 defineDUP :: Lang () 
 defineDUP = defFunBasic "dup" body
@@ -249,7 +339,7 @@ defineDbgDumpDictionary = defFunBasic "dbg_dump_dictionary" body
 
             x86 $ mov rcx (derefOffset rbx 8)
             ppush rcx
-            x86 $ callLabel "dbg_dump_ptop_64"
+            callBody "dbg_dump_ptop_w64"
             pdrop 1
 
             doc "Advance the dictionary to the following item (def.prev)"
@@ -449,20 +539,23 @@ defineParseDef = defFunBasic "PARSE_DEF" body
         ppopW8 al
 
         doc "The ascii code for '=' is 0x3D"
-        x86 $ cmp rax $ I32 0x3D
+        x86 $ cmp rax $ asciiI32 '='
         x86 $ jneNear "PARSE_DEF_ERROR"      
 
+        callBody "read_head_w8"
+        ppop_assert 1 "read_head_w8 failed"
 
         x86 $ callLabel "PARSE_TOP_TERMS"
-        -- TODO: Handle failure better
-        -- assertPtop 1 "Parse failure, handle me (don't make quit)!"
-        pdrop 1
-        
+        ppop rax
+        x86 $ cmp rax $ I32 parse_fail
+        x86 $ jeNear "PARSE_DEF_ERROR"
+
         doc "Expect a dot to be on the stack at the end of a definition:"
         x86 $ xor rax rax
+
+        -- x86 $ callLabel "dbg_dump_ptop_w8"
         ppopW8 al
-        doc "The ascii code for '.' is 0x2E"
-        x86 $ cmp rax $ I32 0x2E
+        x86 $ cmp rax $ asciiI32 '.' -- 0x2E
         x86 $ jneNear "PARSE_DEF_ERROR"
         
         ppush $ I32 1
@@ -482,84 +575,77 @@ defineParseDef = defFunBasic "PARSE_DEF" body
         x86 $ ret
 
 -- Parses input and leaves parameters on the stack of form
+-- In  : :w8
 -- Type: :w64      :w64          :w64        :w64        :w64
--- Func: :nm_hash_0:ty_hash_0:...:nm_hash_n-1:ty_hash_n-1:n  :succ
--- 2020-05-06: I'm not so confident in this function... it might have issues
+-- Func: :nm_hash_0:ty_hash_0:...:nm_hash_n-1:ty_hash_n-1:n  :result
 defineParseStackParams :: Lang ()
-defineParseStackParams = defFunBasic "PARSE_STACK_PARAMS" body
+defineParseStackParams = defFunBasic "parse_stack_params" body
   where
     body = do
-        doc "Count parameters using rbx"
+        ppopW8 al
+        doc "Count parameters using rbx, place the counter before our :w8"
         x86 $ xor rbx rbx
         -- x86 $ inc rbx
         ppush rbx
+        ppush al
 
-        doc "Call PARSE_STACK_PARAM in a loop."
+        doc "Call parse_stack_param in a loop."
         setLabel "PARSE_STACK_PARAMS_LOOP"
         do
-            x86 $ callLabel "PARSE_STACK_PARAM"
+            -- writeMsgHelper "First char before calling parse_stack_param:"
+            callBody "parse_stack_param"
 
-            doc "Check the success of PARSE_STACK_PARAM"
+            doc "Check the success of parse_stack_param"
             ppop rax
-            x86 $ cmp rax $ I32 1
-            x86 $ jeNear "PARSE_STACK_PARAM_OK"
+
+            x86 $ cmp rax $ I32 parse_success
+            x86 $ jeNear "PARSE_STACK_PARAM_SUCCESS"
+
+            x86 $ cmp rax $ I32 parse_reject
+            x86 $ jeNear "PARSE_STACK_PARAM_REJECT"
+
+            x86 $ cmp rax $ I32 parse_fail
+            x86 $ jeNear "PARSE_STACK_PARAM_FAIL"
+
+            setLabel "PARSE_STACK_PARAM_FAIL"
             do
                 doc "Parse stack_param was unsuccessful -- its requirements"
-                doc "were not met. We need to signal general parse failure"
-                doc "and to stop parsing."
+                doc "were not met. Signal general parse failure to the caller"
+                doc "which should cause a parser stop."
                 -- TODO: Maybe deallocate parameters previously pushed?
                 -- (i.e. ensure that the stack is somehow left clean after a 
                 -- failure)
-                ppush $ I32 0
+                ppush $ I32 parse_fail
                 x86   $ ret
 
-            setLabel "PARSE_STACK_PARAM_OK"
-
-            doc "Check whether the parser has matched the input:"
-            ppop rax
-            x86 $ cmp rax $ I32 1
-            x86 $ jeNear "PARSE_STACK_PARAM_MATCHED"
+            setLabel "PARSE_STACK_PARAM_REJECT"
             do
-                doc "Parse stack param was unmatched -- since the parameters "
-                doc "are optional, this means that in this case we did not"
-                doc "encounter a parameter..."
-                doc "On the stack, we have "
-                doc ":count:name_hash:type_name_hash:parse_cont_char."
-                doc "Drop the name_hash and the type_name_hash "
-                doc "and keep parse_cont_char only..."
-                ppopW8 al
-                pdrop 2
+                ppush $ I32 parse_reject
+                x86   $ ret
 
-                -- writeMsgHelper "Number of stack parameters:\n"
-                -- x86 $ callLabel "dbg_dump_ptop_64"
+            setLabel "PARSE_STACK_PARAM_SUCCESS"
+            do 
+                doc "(n name type -- name type (n+1))"
+                doc "On the stack we have :name_hash:type_name_hash"
 
-                ppush al
-                ppush $ I32 1
-                x86 $ ret
+                doc "Increment our rbx counter from the backup"
+                doc "Remove values from the stack to get to the rbx backup"
+                ppop rdx
+                ppop rcx
 
-            setLabel "PARSE_STACK_PARAM_MATCHED"
+                doc "Get the rbx backup value and get rid of it from the stack."
+                ppop rbx
+                x86 $ inc rbx
 
-            doc "On the stack we have :name_hash:type_name_hash:parse_cont_char."
-            doc "Drop the parse_cont_char."
-            pdropW8 1
+                doc "Put back the parse_stack_param values on the stack"
+                doc "in the order we read them:"
+                ppush rcx
+                ppush rdx
 
-            doc "Increment our rbx counter from the backup"
-            doc "Remove values from the stack to get to the rbx backup"
-            ppop rdx
-            ppop rcx
+                ppush rbx
 
-            doc "Get the rbx backup value and get rid of it from the stack."
-            -- writeMsgHelper "DUMP1\n"
-            -- x86 $ callLabel "dbg_dump_ptop_64"
-            ppop rbx
-            x86 $ inc rbx
-
-            doc "Put back the PARSE_STACK_PARAM values on the stack"
-            doc "in the order we read them:"
-            ppush rcx
-            ppush rdx
-
-            ppush rbx
+            callBody "read_head_w8"
+            ppop_assert 1 "read_head_w8 failed\n"
 
         x86 $ jmpLabel "PARSE_STACK_PARAMS_LOOP"
 
@@ -574,48 +660,92 @@ defineParseIdentifier :: Lang ()
 defineParseIdentifier = defFunBasic "parse_identifier" body
   where
     body = do
-        -- TODO: Maybe this needs to have a 'success' return value
-        -- as well, in order for it to be consistent with e.g. read_head_w8...
-        {-
-        x86 $ callLabel "read_head_w8"
-        assertPtop 1 "read_head_w8 failed\n"
-        pdrop 1
-        -}
-        
         x86 $ xor rax rax
         ppeerW8 0 al
 
-        -- callBody "dbg_dump_ptop_8"
+        -- callBody "dbg_dump_ptop_w8"
 
         doc "Is the char less than ascii code a?"
-        x86 $ cmp rax $ I32 0x61
+        x86 $ cmp rax $ asciiI32 'a'
         x86 $ jlNear "PARSE_IDENTIFIER_REJECT"
 
         doc "Is the char greater than ascii code z?"
-        x86 $ cmp rax $ I32 0x7A
+        x86 $ cmp rax $ asciiI32 'z'
         x86 $ jgNear "PARSE_IDENTIFIER_REJECT"
 
-        doc "Parsing an identifier that starts with a-z."
+        doc "Parsing a sequence of a-z,0-9 and _."
         doc "Place the rest of the input onto the stack..."
+        x86 $ callLabel "READ_TAIL_AZ_W8"
+        ppop rax
+
+        x86 $ cmp rax $ I32 parse_success
+        x86 $ jeNear "PARSE_IDENTIFIER_SUCCESS"
+
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "PARSE_IDENTIFIER_SUCCESS"
+
+        doc "Failure.."
+        ppush $ I32 parse_fail
+        x86 $ ret
+
+        setLabel "PARSE_IDENTIFIER_SUCCESS"
+        do 
+            doc "Increment the count to account for the first character."
+            ppopW8 al -- continuation character
+            ppop rbx
+            x86 $ inc rbx
+            ppush rbx
+            ppush al
+
+            ppush $ I32 parse_success
+            x86 $ ret
+
+        setLabel "PARSE_IDENTIFIER_REJECT"
+        ppush $ I32 parse_reject
+        x86 $ ret
+
+defineParseNumeric = defFunBasic "parse_numeric" body
+  where
+    body = do
+        x86 $ xor rax rax
+        ppeerW8 0 al
+
+        doc "Is the char greater than ascii code 9?"
+        x86 $ cmp rax $ I32 0x39
+        x86 $ jgNear "PARSE_NUMERIC_REJECT"
+
+        doc "Is the char less than ascii code 0?"
+        x86 $ cmp rax $ I32 0x30 
+        x86 $ jlNear "PARSE_NUMERIC_REJECT"
+
+        doc "Our input starts with 0-9. Therefore, "
+        doc "attempt to parse a positive integer literal."
+        doc "Read the rest of the input, until whitespace ..."
         x86 $ callLabel "READ_TAIL_W8"
         assertPtop 1 "READ_TAIL_W8 was not successful!"
         pdrop 1
 
-        doc "TODO: ensure that the rest of the characters are also ascii a-z!"
-        doc "and return success = 0 if they aren't."
-        doc "(the parser is currently too permissive)"
-
-        doc "Increment the top to account for the read_head_w8 character too"
         ppop rbx
         x86 $ inc rbx
         ppush rbx
-        
-        ppush $ I32 2 -- parse successful, continue parsing.
+
+        x86 $ callLabel "PARSEINT"
+        ppop rax
+        x86 $ cmp rax $ I32 1
+        x86 $ jneNear "PARSE_NUMERIC_ERROR"
+
+        x86 $ callLabel "read_head_w8"
+        ppop_assert 1 "L.706 read_head_w8"
+
+        ppush $ I32 parse_success -- success
         x86 $ ret
 
-        setLabel "PARSE_IDENTIFIER_REJECT"
-        
-        ppush $ I32 1 -- non-fatal parse failure, continue parsing.
+        setLabel "PARSE_NUMERIC_REJECT"
+        ppush $ I32 parse_reject -- non-fatal parse failure, continue parsing.
+        x86 $ ret
+
+        setLabel "PARSE_NUMERIC_ERROR"
+        ppush $ I32 parse_fail -- fatal parse failure, stop parsing.
         x86 $ ret
 
 
@@ -631,7 +761,7 @@ defineParseIdentifier = defFunBasic "parse_identifier" body
 -- match: The parser matched the input initially
 -- success: All parser input requirements were fulfilled
 defineParseStackParam :: Lang ()
-defineParseStackParam = defFunBasic "PARSE_STACK_PARAM" body
+defineParseStackParam = defFunBasic "parse_stack_param" body
   where
     body = do
         {-
@@ -639,18 +769,20 @@ defineParseStackParam = defFunBasic "PARSE_STACK_PARAM" body
         assertPtop 1 "read_head_w8 failed\n"
         pdrop 1
         -}
+        -- callBody "dbg_dump_ptop_w8"
 
         x86 $ xor rax rax
         ppopW8 al
 
         doc "A parameter is preceded by a colon, which signifies a stack "
-        doc "connection."
-        x86 $ cmp rax $ I32 0x3A -- ":"
+        doc "cell (inspired by Haskell's cons operator)."
+        doc "0x3A is ASCII ':' "
+        x86 $ cmp rax $ asciiI32 ':'
         x86 $ jeNear "IS_STACK_PARAM"
 
         do
-            ppush $ al    -- Continuation character
-            ppush $ I32 1 -- the input doesn't match this parser
+            ppush $ al               -- Continuation character
+            ppush $ I32 parse_reject -- the input doesn't match this parser
             x86 $ ret
 
         setLabel "IS_STACK_PARAM"
@@ -662,21 +794,19 @@ defineParseStackParam = defFunBasic "PARSE_STACK_PARAM" body
             pdrop 1
             callBody "parse_identifier"
             ppop rax
-            x86 $ cmp rax $ I32 2
+            x86 $ cmp rax $ I32 parse_success
             x86 $ jeNear "STACK_PARAM_HAS_TYPE"
 
-            doc "We've encountered something that isn't an identifier where"
+            doc "We've encountered a non-identifier where"
             doc "one is requried."
             doc "This should be a stopping error for the parser."
             do
-                ppush $ I32 0 -- fail (critical).
+                ppush $ I32 parse_fail -- fail (critical).
                 x86 $ ret
 
             setLabel "STACK_PARAM_HAS_TYPE"
 
             x86 $ callLabel "TERM_HASH"
-            -- writeMsgHelper  "Type hash parse OK:\n"
-            -- x86 $ callLabel "dbg_dump_ptop_64"
 
         doc "Now that the type name hash is on the stack, the"
         doc "parameter identifier follows:"
@@ -686,81 +816,189 @@ defineParseStackParam = defFunBasic "PARSE_STACK_PARAM" body
         pdrop 1
         callBody "parse_identifier"
         ppop rax
-        x86 $ cmp rax $ I32 2
+        x86 $ cmp rax $ I32 parse_success
         x86 $ jeNear "HAS_PARAM_NAME"
 
         do 
-            ppush $ I32 0 -- critical failure
+            ppush $ I32 parse_fail -- critical failure
             x86   $ ret
 
         setLabel "HAS_PARAM_NAME"
         x86 $ callLabel "TERM_HASH"
-        -- writeMsgHelper  "Parameter hash successfully parsed:\n"
-        -- x86 $ callLabel "dbg_dump_ptop_64"
 
-        ppush $ I32 2 -- success!
+        ppush $ I32 parse_success 
         x86   $ ret
 
 defineParseStackRewriteTerm :: Lang ()
-defineParseStackRewriteTerm = defFunBasic "PARSE_STACK_RW_TERM" body
+defineParseStackRewriteTerm = defFunBasic "parse_stack_rw_term" body
   where
     body = do
-        -- Try to parse a RW term. If that fails, fall back to an IF_TERM
-        x86 $ callLabel "PARSE_STACK_PARAMS"
-        ppop rax
-        x86 $ cmp rax $ I32 1
-        x86 $ jeNear "SUCCESS_PARSE_STACK_FROM"
-        do
-            doc "Parameter parsing has failed, fall back to the IF term parser."
-            x86 $ callLabel "PARSE_IF_TERM"
-            x86 $ ret
+        doc "Try to parse a stack-rewrite command. If that fails then reject."
 
-        setLabel "SUCCESS_PARSE_STACK_FROM"
-
-        callBody "read_head_w8"
-        assertPtop 1 "read_head_w8 failed\n"
-        pdrop 1
         x86 $ xor rax rax
         ppeerW8 0 al
-        x86 $ cmp rax $ I32 0x2D -- '-'
-        x86 $ jeNear "PARSE_STACK_RW_TERM_OK"
+
+        x86 $ cmp rax $ asciiI32 '('
+        x86 $ jeNear "parse_stack_rw_start_success"
+        do
+            doc "The term doesn't start with a '(' so it's not a rw term."
+            ppush $ I32 parse_reject
+            x86 $ ret
+
+        setLabel "parse_stack_rw_start_success"
+
+        doc "Consume the '('"
+        ppopW8 al
+
+        doc "On the LHS there must be at least one parameter, and hence"
+        doc "we parse it:"
+
+        doc "Await a new char..."
+        callBody "read_head_w8"
+        ppop_assert 1 "L.810 read_head_w8 failure...\n"
+
+        callBody "parse_stack_param"
+
+        ppop rax
+        x86 $ cmp rax $ I32 parse_success
+        x86 $ jeNear "parse_stack_from_first_success"
+        do
+            doc "Parameter parsing was rejected or failed, fail"
+            ppush $ I32 parse_fail
+            x86 $ ret
+            {- doc "Parameter parsing was rejected, continue with the IF "
+            doc "term parser."
+            callBody "parse_if_term"
+            x86 $ ret
+            -}
+
+        setLabel "parse_stack_from_first_success"
+
+        doc "Parse the rest of the parameters (which might be absent!)"
+        doc "parse_stack_params can only ever return a reject or a fail."
+        doc "The reason is that the only way for it to stop is to encounter "
+        doc "something that isn't a parameter of form ':type value', which "
+        doc "makes the parser issue a reject."
+
+        callBody "read_head_w8"
+        ppop_assert 1 "L.836 read_head_w8 failure...\n"
+
+        callBody "parse_stack_params"
+        ppop rax
+        -- assert rax != parse_success
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "success_parse_stack_from_rest"
+        do
+            doc "Parameter parsing has failed in some way - fail."
+            ppush $ I32 parse_fail
+            x86 $ ret
+
+        setLabel "success_parse_stack_from_rest"
+
+        -- TODO: Check that there is at least one term on the left
+        -- hand side. If there isn't, it's a reject.
+
+        x86 $ xor rax rax
+        ppopW8 al
+        x86 $ cmp rax $ asciiI32 '-'
+        x86 $ jeNear "success_parse_rw_dash"
         do
             doc "Parameter parsing has failed, there should be a dash."
+            writeMsgHelper "Stack RW term parse failed, missing '-' char!\n"
+            ppush $ I32 parse_fail
+            x86 $ ret
 
-        setLabel "PARSE_STACK_RW_TERM_OK"
+        setLabel "success_parse_rw_dash"
+
+        callBody "read_head_w8"
+        ppop_assert 1 "L.866 read_head_w8 failure...\n"
+
+        callBody "parse_stack_params"
+
+        ppop rax
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "done_parse_stack_to"
+        do
+            writeMsgHelper "Parameter parsing has failed, abort!\n"
+            doc "Parameter parsing has failed, abort."
+            ppush $ I32 parse_fail
+            x86 $ ret
+
+        setLabel "done_parse_stack_to"
+        doc "Successfully parsed 'from - to' sequence. Finally we expect a ')'"
+
+        -- callBody "read_head_w8"
+        -- ppop_assert 1 "L.882 read_head_w8 failure...\n" 
+
+        x86 $ xor rax rax
+        ppopW8 al
+
+        x86 $ cmp rax $ asciiI32 ')'
+        x86 $ jeNear "parse_stack_rw_end_success"
+        do
+            doc "The term doesn't end with a ')' so it's not a rw term."
+            ppush $ I32 parse_fail
+            x86 $ ret
+
+        setLabel "parse_stack_rw_end_success"
+
+        doc "Consume the ')'"
+        ppush $ I32 parse_success
         x86 $ ret
+
 
 defineParseIfTerms :: Lang ()
 defineParseIfTerms = defFunBasic "PARSE_TOP_TERMS" body
   where
     body = do
         doc "Call PARSE_IF_TERM in a loop"
-        setLabel "PARSE_IF_TERMS_LOOP"
-        -- x86 $ callLabel "PARSE_STACK_RW_TERM"
-        --
-        doc "We read a char to feed the next PARSE_IF_TERM call."
+        setLabel "parse_top_terms_loop"
+
+        {- TODO: Fix to new convention
+        x86 $ callLabel "parse_stack_rw_term"
+        ppop rax
+        x86 $ cmp rax $ I32 parse_fail
+        x86 $ jeNear "parse_top_terms_fail"
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "parse_stack_rw_term_reject"
+
+        doc "successfully parsed a rw_term!"
         callBody "read_head_w8"
-        ppop_assert 1 "read_head_w8 failure...\n"
+        ppop_assert 1 "L.918 read_head_w8 failure...\n"
+
+        x86 $ jeNear "parse_top_terms_loop"
 
         -- writeMsgHelper "Char on the stack:\n"
-        -- callBody "dbg_dump_ptop_8"
+        -- callBody "dbg_dump_ptop_w8"
 
-        callBody "PARSE_IF_TERM"
+        setLabel "parse_stack_rw_term_reject"
+        -}
+
+        callBody "parse_if_term"
         -- Check for success
         ppop rax
-        x86 $ cmp rax $ I32 0
-        x86 $ jeNear "PARSE_IF_TERMS_TERMINATE"
-        x86 $ cmp rax $ I32 1
-        x86 $ jeNear "PARSE_IF_TERMS_TERMINATE"
+        x86 $ cmp rax $ I32 parse_fail
+        x86 $ jeNear "parse_top_terms_fail"
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "parse_top_terms_reject"
 
-        x86 $ jmpLabel "PARSE_IF_TERMS_LOOP"
+        -- We don't need to read a char, because the parser returns that now.
+        -- doc "We read a char to feed the next parse_if_term call."
+        -- callBody "read_head_w8"
+        -- ppop_assert 1 "L.925 read_head_w8 failure...\n"
 
-        setLabel "PARSE_IF_TERMS_TERMINATE"
-        ppush $ I32 0
+        x86 $ jmpLabel "parse_top_terms_loop"
+
+        setLabel "parse_top_terms_reject"
+        ppush $ I32 parse_reject
+        x86 $ ret
+
+        setLabel "parse_top_terms_fail"
+        ppush $ I32 parse_fail
         x86 $ ret
 
 defineParseIfTerm :: Lang ()
-defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
+defineParseIfTerm = defFunBasic "parse_if_term" body
   where
     body = do
         doc "Parse a term (an IF term or a simpler one)."
@@ -774,38 +1012,29 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
         doc "Patern match on the first character that was read "
         doc "i.e. the stack top / the result of read_head_w8 / rax:"
 
-        x86 $ xor rax rax
-        ppeerW8 0 al
+        callBody "parse_numeric"
+        doc "Interpret the result of parse_numeric:"
+        ppop rax
+        x86 $ cmp rax $ I32 parse_success
+        x86 $ jeNear "PARSE_IF_TERM_IS_NUMERIC"
+        x86 $ cmp rax $ I32 parse_reject
+        x86 $ jeNear "PARSE_IF_TERM_NOT_NUMERIC"
+        x86 $ cmp rax $ I32 parse_fail
+        x86 $ jeNear "PARSE_IF_TERM_INT_ERROR"
 
-        doc "Is the char greater than ascii code 9?"
-        x86 $ cmp rax $ I32 0x39
-        x86 $ jgNear "PARSE_IF_TERM_NOT_NUMERIC"
-
-        doc "Is the char less than ascii code 0?"
-        x86 $ cmp rax $ I32 0x30 
-        x86 $ jlNear "PARSE_IF_TERM_NOT_NUMERIC"
-
-        do 
-            doc "Our term starts with 0-9. Therefore, "
-            doc "attempt to parse a positive integer literal."
-            doc "Read the rest of the input, until whitespace ..."
-            x86 $ callLabel "READ_TAIL_W8"
-            assertPtop 1 "READ_TAIL_W8 was not successful!"
-            pdrop 1
-
-            ppop rbx
-            x86 $ inc rbx
-            ppush rbx
-
-            x86 $ callLabel "PARSEINT"
-            ppop rax
-            x86 $ cmp rax $ I32 1
-            x86 $ jneNear "PARSE_IF_TERM_INT_ERROR"
-            doc "Emit the JIT literal that was just entered."
+        setLabel "PARSE_IF_TERM_IS_NUMERIC"
+        do
+            doc "Action on success:"
+            -- Backup the continuation character
+            ppop  al
+            spush al
             x86 $ callLabel "EMIT_LIT_64"
 
             doc "Parse successful."
-            ppush $ I32 2
+            -- Restore the continuation character
+            spop  al
+            ppush al
+            ppush $ I32 parse_success
             x86 $ ret
 
         setLabel "PARSE_IF_TERM_NOT_NUMERIC"
@@ -814,61 +1043,92 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
 
         doc "Interpret the result of parse_identifier:"
         ppop rax
-        x86 $ cmp rax $ I32 2
+        x86 $ cmp rax $ I32 parse_success
         x86 $ jeNear "PARSE_IF_TERM_IS_IDENTIFIER"
-        x86 $ cmp rax $ I32 1
+        x86 $ cmp rax $ I32 parse_reject
         x86 $ jeNear "PARSE_IF_TERM_REJECT_INPUT"
-        x86 $ cmp rax $ I32 0
-        x86 $ jeNear "PARSE_IF_TERM_IDENTIFIER_ERROR"
+        -- x86 $ cmp rax $ I32 parse_fail
+        -- x86 $ jeNear "PARSE_IF_TERM_IDENTIFIER_ERROR"
         
         setLabel "PARSE_IF_TERM_REJECT_INPUT"
-        doc "We've reached an unknwon ascii character (usually a dot)"
+        doc "We've reached an unknwon ascii character (e.g. a dot)"
         doc "We stop parsing and signal that we don't know how to "
         doc "handle this"
-        ppush $ I32 1
+        ppush $ I32 parse_reject
         x86 $ ret
 
         setLabel "PARSE_IF_TERM_IS_IDENTIFIER"
-
-        callBody "TERM_HASH"
-
         do
-            ppeek rax
+            -- Pop the parser continuation character because we wish to
+            -- pass it on to next parser!
+            x86 $ xor rdx rdx
+            ppop  bl
+            spush bl -- Write the cont. char to the scratch stack (easier)
 
-            x86 $ mov rbx (I64 $ fnv1s "if0")
+            callBody "TERM_HASH"
+            ppop rax
+            spop  bl
+            ppush bl -- Put back cont. char
+
+            ppush rax -- hash
+
+            x86 $ mov rbx (I64 $ fnv1s "if")
             x86 $ cmp rax rbx
-            x86 $ jneNear "PARSE_IF_TERM_NOT_IF0"
+            x86 $ jneNear "PARSE_IF_TERM_NOT_IF"
 
             pdrop 1 -- Cleanup: remove the term.
-            doc "Parsing an IF0. After it there should be a '{'"
+            doc "Parsing an IF. After it there should be a '{'"
             
-            callBody "read_head_w8"
-            assertPtop 1 "read_head_w8 failed\n"
-            pdrop 1
+            -- callBody "read_head_w8"
+            -- ppop_assert 1 "read_head_w8 failed\n"
+            -- ppush dl
+
             x86 $ xor rax rax
-            ppeerW8 0 al
-            x86 $ cmp rax $ I32 0x7B -- {
+            ppopW8 al
+            x86 $ cmp rax $ asciiI32 '{'
             x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_OPEN"
 
-            doc "Emit the 'IF0' initial part"
-            x86 $ callLabel "EMIT_IF0_START"
+            doc "Emit the 'IF' initial part"
+            callBody "EMIT_IF_START"
+
+            callBody "read_head_w8"
+            ppop_assert 1 "read_head_w8 failed"
 
             x86 $ callLabel "PARSE_TOP_TERMS"
-            pdrop 1 -- Ignore whether PARSE_TOP_TERMS had a parse error or not
-            
+            ppop rax
+            x86 $ do
+                cmp rax $ I32 parse_reject
+                jeNear "PARSE_TOP_TERMS_CONTINUE"
+                cmp rax $ I32 parse_fail
+                jeNear "PARSE_TOP_TERMS_FAIL"
+
+            setLabel "PARSE_TOP_TERMS_FAIL"
+
+            -- Consume all input until there is a '}'? 
+            -- Not recommended, because we might not have one.
+            -- This is kind of tricky.
+
+            writeMsgHelper "'if' body parse failure.\n"
+            ppush $ I32 parse_fail
+            x86 $ ret
+        
+            setLabel "PARSE_TOP_TERMS_CONTINUE"
             doc "After PARSE_TOP_TERMS returns there should be a '}'"
             x86 $ xor rax rax
             ppopW8 al
-            x86 $ cmp rax $ I32 0x7D -- }
+            x86 $ cmp rax $ asciiI32 '}'
             x86 $ jneNear "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
 
-            doc "Complete the 'IF0'!"
-            x86 $ callLabel "EMIT_IF0_END"
+            doc "Complete the 'IF'!"
+            callBody "EMIT_IF_END"
             
-            ppush $ I32 2
+            x86 $ callLabel "read_head_w8"
+            ppop_assert 1 "read_head_w8 failed"
+
+            ppush $ I32 parse_success
             x86   $ ret
 
-        setLabel "PARSE_IF_TERM_NOT_IF0"
+        setLabel "PARSE_IF_TERM_NOT_IF"
         do
             doc "Is it a RETURN statement?"
             ppeek rax
@@ -881,7 +1141,7 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
             doc "Yes, it's a RETURN statement."
             x86 $ callLabel "EMIT_RET"
 
-            ppush $ I32 2
+            ppush $ I32 parse_success
             x86 $ ret
 
         setLabel "PARSE_IF_TERM_NOT_RETURN"
@@ -894,20 +1154,20 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
             doc "might be 0)"
 
             writeMsgHelper  "Check stack reference for:\n"
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
             {-
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
-            x86 $ callLabel "dbg_dump_ptop_64"
+            x86 $ callLabel "dbg_dump_ptop_w64"
             pdrop 1
             -}
             x86 $ ret
@@ -915,11 +1175,11 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
         setLabel "PARSE_IF_TERM_NOT_PARAMETER"
         -}
         do
-            -- x86 $ callLabel "dbg_dump_ptop_64"
+            -- x86 $ callLabel "dbg_dump_ptop_w64" -- hash
             -- x86 $ callLabel "dbg_dump_dictionary"
 
 
-            doc "Parse a term other than IF0"
+            doc "Parse a term other than IF"
             x86 $ callLabel "TERM_LOOK_NOHASH"
 
             doc "Check for an unknown term (do nothing in that case)."
@@ -931,34 +1191,40 @@ defineParseIfTerm = defFunBasic "PARSE_IF_TERM" body
             doc "term address:"
             x86 $ callLabel "EMIT_CALL"
 
-            ppush $ I32 2
+            ppush $ I32 parse_success
             x86 $ ret
 
         setLabel "PARSE_IF_TERM_NOT_AZ"
-        ppush $ I32 0
+        ppush $ I32 parse_fail
         x86 $ ret
 
         setLabel "PARSE_IF_TERM_UNDEFINED"
-        writeMsgHelper "L.880 Undefined term!\n"
-        ppush $ I32 0
+        writeMsgHelper "Undefined term!\n"
+        ppush $ I32 parse_fail
+        x86 $ ret
+
+        setLabel "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
+        writeMsgHelper "'if' missing '}'\n"
+        ppush $ I32 parse_fail
         x86 $ ret
 
         setLabel "PARSE_IF_TERM_NO_CURLY_BRACE_OPEN"
-        setLabel "PARSE_IF_TERM_NO_CURLY_BRACE_CLOSE"
-        writeMsgHelper "Curly brace errors (open or close missing)!\n"
-        ppush $ I32 0
+        writeMsgHelper "'if' missing '{'!\n"
+        ppush $ I32 parse_fail
         x86 $ ret
 
+        {-
         setLabel "PARSE_IF_TERM_IDENTIFIER_ERROR"
         pdrop 1
         writeMsgHelper "Identifier parse error!\n"
-        ppush $ I32 0
+        ppush $ I32 parse_fail
         x86 $ ret
+        -}
 
         setLabel "PARSE_IF_TERM_INT_ERROR"
         pdrop 1
         writeMsgHelper "Integer parse error!\n"
-        ppush $ I32 0
+        ppush $ I32 parse_fail
         x86 $ ret
         
 defineREPLDef :: Lang ()
@@ -996,7 +1262,6 @@ defineREPL = defFunBasic "repl" body
         pdrop 1
         doc "Hash the term we've read:"
         x86 $ callLabel "TERM_HASH"
-        -- x86 $ callLabel "dbg_dump_ptop_64"
 
         -- The first word is the operation we wish to make.
         -- There are two operations for now, define and call.
@@ -1051,11 +1316,11 @@ defineREPL = defFunBasic "repl" body
 -- Emits the current position and pushes on the stack
 -- the address at which the 32-bit offset to be later on filled
 -- is located.
-defineEMITIF0_START :: Lang () 
-defineEMITIF0_START = defFunBasic "EMIT_IF0_START" body
+defineEMITIF_START :: Lang () 
+defineEMITIF_START = defFunBasic "EMIT_IF_START" body
   where
     body = do
-        doc "Emit IF0 start"
+        doc "Emit IF start"
         -- ppop rax
         -- 48 8B 06 : mov rax,[rsi]
         x86 $ do
@@ -1074,15 +1339,15 @@ defineEMITIF0_START = defFunBasic "EMIT_IF0_START" body
             mov (derefOffset r9 5) (I8 0x00)
             add r9 (I32 6)
 
-        -- 0x0F 0x85           -- JNE NEAR opcode
-        -- 0x00 0x00 0x00 0x00 -- 32-bit offest, to be filled afterwards.
+        -- 0x0F 0x84           -- JE NEAR opcode
+        -- 0x00 0x00 0x00 0x00 -- 32-bit offset, to be filled afterwards.
         doc "We don't yet know the jump offset. To fill this"
-        doc "out later (in EMIT_IF0_END), save the position at which the "
+        doc "out later (in EMIT_IF_END), save the position at which the "
         doc "address is to be written."
-        doc "The offset is to be calculated from the position of JNE (0F 85)"
+        doc "The offset is to be calculated from the position of JE (0F 84)"
         x86 $ do
-            mov (derefOffset r9 0) (I8  0x0F)
-            mov (derefOffset r9 1) (I8  0x85)
+            mov (derefOffset r9 0) (I8 0x0F)
+            mov (derefOffset r9 1) (I8 0x84)
             mov (derefOffset r9 2) (I8 0x00)
             mov (derefOffset r9 3) (I8 0x00)
             mov (derefOffset r9 4) (I8 0x00)
@@ -1091,12 +1356,12 @@ defineEMITIF0_START = defFunBasic "EMIT_IF0_START" body
 
         ppush r9
 
--- Complete the definition created by defineEMITIF0_START
-defineEMITIF0_END :: Lang () 
-defineEMITIF0_END = defFunBasic "EMIT_IF0_END" body
+-- Complete the definition created by defineEMITIF_START
+defineEMITIF_END :: Lang () 
+defineEMITIF_END = defFunBasic "EMIT_IF_END" body
   where
     body = do
-        doc "Emit IF0 end (it doesn't emit opcode, it just writes the current"
+        doc "Emit IF end (it doesn't emit opcode, it just writes the current"
         doc "r9)"
 
         ppop rax              -- Saved R9
@@ -1234,12 +1499,12 @@ definePTopWrite = defFunBasic funName body
 -}
         
 
+-- Improve: Is TESH_HASH expressible as a sequence of more basic words?
+-- ( c0..cn-1:n -- hash )
+-- alters: rbx, rcx, rax, rdx
 defineTermHash :: Lang ()
-defineTermHash = defFunBasic funName body
+defineTermHash = defFunBasic "TERM_HASH" body
   where
-    -- Improve: Is TESH_HARM expressible as a sequence of more basic words?
-    funName = "TERM_HASH"
-    ty      = undefined -- Unexpressible atm.
     body    = do
         doc "Given a word on the stack, compute its hash. This helps to"
         doc "compare words for equality when searching the dictionary."
@@ -1289,9 +1554,6 @@ defineTermReadLinux = defFunBasic funName body
         assertPtop 1 "read_head_w8 failed\n"
         pdrop 1
 
-        -- x86 $ writeMsgHelper "This is what it read:\n"
-        -- x86 $ callLabel "dbg_dump_ptop_64"
-
         doc "Reads characters until a space or a control "
         doc "char (non-printable) is read."
         x86 $ callLabel "READ_TAIL_W8"
@@ -1310,9 +1572,8 @@ defineTermReadLinux = defFunBasic funName body
 -- Type : -> :w8        :w64
 -- Func : -> :read_char:success
 defineRdHeadW8 :: Lang ()
-defineRdHeadW8 = defFunBasic funName body
+defineRdHeadW8 = defFunBasic "read_head_w8" body
   where
-    funName = "read_head_w8"
     body = do
         doc "Allocate 1 byte on the parameter-stack in which our"
         doc "first non-whitespace character is placed:"
@@ -1346,11 +1607,113 @@ defineRdHeadW8 = defFunBasic funName body
         x86 $ asm $ setLabel "RPC_ERROR"
         ppush $ I32 0 -- Fail
 
-defineRdTailW8 :: Lang ()
-defineRdTailW8 = defFunBasic funName body
+defineRdTailAZW8 :: Lang ()
+defineRdTailAZW8 = defFunBasic "READ_TAIL_AZ_W8" body
   where
-    funName = "READ_TAIL_W8"
-    ty = undefined
+    body = do
+        doc "READ_TAIL_AZ_W8 reads characters until a non[a-z,0-9,_]"
+        doc "character is encountered."
+        doc "It pushes on the stack an array of w8s then it pushes a"
+        doc "w64 indicating how many chars have been read,"
+        doc "followed by a w64 indicating success or failure."
+        doc "r15 counts the chars that are successfully read."
+        x86 $ xor r15 r15
+        x86 $ asm $ setLabel "READ_TAIL_AZ_WHILE"
+
+        doc "Allocate 1 byte on the stack to read into"
+        ppush $ I8 0x00
+        doc "Please read"
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_read
+        doc "1 char"
+        x86 $ mov rdx $ I64 0x01 
+        doc "From stdin"
+        x86 $ xor rbx rbx
+        doc "Into the pstack"
+        x86 $ mov rcx rsi
+        x86 $ int
+
+        x86 $ cmp rax $ I32 0x00
+        x86 $ jeNear "READ_TAIL_AZ_W8_ERROR"
+       
+        doc "Place the char we've just read into rax"
+        x86 $ xor rax rax
+        ptopW8 al
+
+        doc "Probe the char we just read if it's non-a-z "
+        doc "then break the loop:"
+        x86 $ cmp rax $ asciiI32 'a'
+        x86 $ jlNear "READ_TAIL_AZ_W8_NON_AZ" 
+        x86 $ cmp rax $ asciiI32 'z'
+        x86 $ jgNear "READ_TAIL_AZ_W8_NON_AZ"
+
+        doc "It's an a-z. Repeat"
+        x86 $ inc r15
+        x86 $ jmpLabel "READ_TAIL_AZ_WHILE"
+
+        setLabel "READ_TAIL_AZ_W8_NON_AZ"
+        x86 $ cmp rax $ asciiI32 '0'
+        x86 $ jlNear "READ_TAIL_AZ_W8_NON_09" 
+        x86 $ cmp rax $ asciiI32 '9'
+        x86 $ jgNear "READ_TAIL_AZ_W8_NON_09"
+
+        doc "It's a 0-9. Repeat"
+        x86 $ inc r15
+        x86 $ jmpLabel "READ_TAIL_AZ_WHILE"
+       
+        setLabel "READ_TAIL_AZ_W8_NON_09"
+        x86 $ cmp rax $ asciiI32 '_'
+        x86 $ jneNear "READ_TAIL_AZ_W8_NON__"
+
+        doc "It's an underscore. Repeat"
+        x86 $ inc r15
+        x86 $ jmpLabel "READ_TAIL_AZ_WHILE"
+
+        setLabel "READ_TAIL_AZ_W8_NON__"
+
+        doc "Check whether it's a non-printable character."
+        doc "If so then call read_head_w8 and end with success."
+
+        x86 $ cmp rax $ asciiI32 ' ' -- Space or less, skip
+        x86 $ jleNear "READ_TAIL_W8_IDENTIFIER_SUCCESS" 
+        x86 $ cmp rax $ I32 0x7F -- ESC
+        x86 $ jeNear  "READ_TAIL_W8_IDENTIFIER_SUCCESS"
+
+        doc "We've reached a non-acceptable, non-space char, but we "
+        doc "have a result. Return with that character and success."
+
+        ppopW8 al
+        doc "Number of chars read:"
+        ppush $ r15
+        doc "Continuation character for the next parser:"
+        ppush al
+        ppush $ I32 parse_success
+        x86 $ ret
+
+        setLabel "READ_TAIL_W8_IDENTIFIER_SUCCESS"
+        doc "Drop the whitespace char and succeed."
+        pdropW8 1
+
+        doc "Number of chars read (part of the data):"
+        ppush $ r15
+
+        doc "Call read_head_w8 to obtain a valid continuation character."
+        x86 $ callLabel "read_head_w8"
+        ppop_assert 1 "L.1641 could not read_head_w8!\n"
+
+        doc "Success:"
+        ppush $ I32 parse_success
+        x86 $ ret
+
+        setLabel "READ_TAIL_AZ_W8_ERROR"
+        doc "Free the stack from the last allocation:"
+        ppopW8 al
+        doc "Error:"
+        ppush $ I32 parse_fail
+        x86 $ ret
+
+defineRdTailW8 :: Lang ()
+defineRdTailW8 = defFunBasic "READ_TAIL_W8" body
+  where
     body = do
         doc "READ_TAIL_W8 reads characters until a non-printable"
         doc "character is encountered."
@@ -1382,7 +1745,7 @@ defineRdTailW8 = defFunBasic funName body
 
         doc "Probe the char we just read if it's non-printable "
         doc "then break the loop:"
-        x86 $ cmp rax $ I32 0x20 -- Space or less, skip
+        x86 $ cmp rax $ asciiI32 ' ' -- Space or less, skip
         x86 $ jleNear "READ_TAIL_W8_BREAK" 
         x86 $ cmp rax $ I32 0x7F -- ESC
         x86 $ jeNear  "READ_TAIL_W8_BREAK"
@@ -1473,9 +1836,9 @@ defineExit = defFunBasic "exit" body
 -- Func :val -> :val
 -- Does nothing; as a side effect, it prints the top of the stack on stdout.
 defineDbgDumpPtop8 :: Lang ()
-defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_8" body
+defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_w8" body
   where
-    ty = TyFunc "dbg_dump_ptop_8" baseWord baseWord
+    ty = TyFunc "dbg_dump_ptop_w8" baseWord baseWord
     body = do
         doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the top of the stack."
@@ -1537,9 +1900,9 @@ defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_8" body
 -- Func :val -> :val
 -- Does nothing; as a side effect, it prints the top of the stack on stdout.
 defineDbgDumpPtop64 :: Lang ()
-defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_64" body
+defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_w64" body
   where
-    ty = TyFunc "dbg_dump_ptop_64" baseWord baseWord
+    ty = TyFunc "dbg_dump_ptop_w64" baseWord baseWord
     body = do
         doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the top of the stack."
@@ -1603,7 +1966,6 @@ defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_64" body
 defineWrChrLinux :: Lang ()
 defineWrChrLinux = defFunBasic "write_char" body
   where 
-    ty   = TyFunc "write_char" baseWord baseWord
     body = do
         x86 $ mov rdx $ I64 1 -- How many bytes to write?
         x86 $ mov rax $ I64 $ fromIntegral linux_sys_write
@@ -1612,6 +1974,20 @@ defineWrChrLinux = defFunBasic "write_char" body
         x86 $ mov rcx rsi
         x86 $ int
         pdrop 1   -- Drop the top of the stack which was the char
+                  -- we've just printed.
+        ppush rax -- The putchar result, how many bytes we've written
+
+defineWrAsciiW8Linux :: Lang ()
+defineWrAsciiW8Linux = defFunBasic "write_ascii_w8" body
+  where 
+    body = do
+        x86 $ mov rdx $ I64 1 -- How many bytes to write?
+        x86 $ mov rax $ I64 $ fromIntegral linux_sys_write
+        x86 $ mov rbx $ I64 $ fromIntegral linux_stdout 
+        -- read chars from the top of the params stack, i.e. from our buffer.
+        x86 $ mov rcx rsi
+        x86 $ int
+        pdropW8 1 -- Drop the top of the stack which was the char
                   -- we've just printed.
         ppush rax -- The putchar result, how many bytes we've written
 

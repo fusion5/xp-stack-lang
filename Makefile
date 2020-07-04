@@ -46,7 +46,9 @@ functional_test: main
 parser_test: main
 	@echo 0 means PASS, anything else is FAIL.
 	@echo -----
-	@./main < test_programs/test_suite_parse_identifier.program 
+	./main < test_programs/test_suite_parse_identifier.program 
+	./main < test_programs/test_suite_parse_numeric.program 
+	./main < test_programs/test_suite_parse_stack_param.program 
 
 %.gdb_trace: %.program main
 	printf "set confirm off \n\

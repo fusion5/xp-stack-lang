@@ -1,4 +1,4 @@
-def a = 0 if0 { 2 } .
+def a = 1 if { 2 } .
 def main = 
     a
     2

@@ -1,33 +1,59 @@
-def test_expect_good = 
-    read_head_w8
-    drop
+def function_under_test = parse_identifier .
 
-    parse_identifier
+def test_expect_success = 
+    read_head_w8
+    drop_w64
+
+    function_under_test
     2 minus
-    dbg_dump_ptop_64
+    dbg_dump_ptop_w64
+    drop_w64
+    dbg_dump_ptop_w8
 .
-def test_expect_bad = 
+
+def test_expect_reject = 
     read_head_w8
-    drop
-
-    parse_identifier
+    drop_w64
+    
+    function_under_test
     1 minus
-    dbg_dump_ptop_64
+    dbg_dump_ptop_w64
+    drop_w64
+.
+def test_expect_fail = 
+    read_head_w8
+    drop_w64
+
+    function_under_test
+    dbg_dump_ptop_w64
+    drop_w64
 .
 
-run test_expect_good
-a
+run test_expect_success
+a ?
 
-run test_expect_good
-z
+run test_expect_success
+z?
 
-run test_expect_good
-nice
+run test_expect_success
+n_ ?
 
-run test_expect_bad
+run test_expect_success
+a0 ?
+
+run test_expect_reject
+0
+
+run test_expect_reject
+?
+
+run test_expect_reject
+_
+
+run test_expect_reject
 `
 
-run test_expect_bad
+run test_expect_reject
 {
 
 q
