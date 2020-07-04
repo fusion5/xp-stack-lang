@@ -1,6 +1,0 @@
-run dbg_parse_test_suite
-n
-0
-test
-:w64 abc
-q

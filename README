@@ -1,8 +1,8 @@
-What is this?
+What is it?
 
-This repository contains a personal experimentation project that started
-in 2019 with the goal of exploring implementation methods of a stack-based
-programming language inspired by Forth. 
+A personal experimentation project that started in 2019 with the goal of 
+exploring implementation methods of a stack-based programming language 
+inspired by Forth. 
 
 It's a work in progress currently undergoing refactoring.
 

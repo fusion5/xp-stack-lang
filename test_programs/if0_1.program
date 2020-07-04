@@ -1,8 +1,0 @@
-def a = 1 if { 2 } .
-def main = 
-    a
-    2
-    minus
-.
-run main
-q

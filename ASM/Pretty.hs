@@ -19,8 +19,8 @@ legend =
     ++ "{StrRef x} means a reference to a string in the string table\n"
     ++ "{Program Size} is the size of the whole program."
 
-asmPretty :: ASMState -> String
-asmPretty endASMState = 
+asmDocs :: ASMState -> String
+asmDocs endASMState = 
     (intercalate "\n" $ map asmCodePretty $ toList $ asm_instr endASMState)
     ++ "\n"
     ++ "All labels:\n"

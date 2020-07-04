@@ -361,6 +361,8 @@ jleNear = jNear 0x8E
 jneNear = jNear 0x85 
 joNear  = jNear 0x80 -- Jump on overflow
 jnoNear = jNear 0x81 -- Jump on not overflow
+jcNear  = jNear 0x82 -- Jump on CF=1
+jncNear = jNear 0x83 -- Jump on CF=0
 
 jl :: String -> X86_64()
 jl label = do

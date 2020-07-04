@@ -1,4 +1,4 @@
-module ELFHeader where
+module ELFHeader64 where
 
 import Data.Word
 
