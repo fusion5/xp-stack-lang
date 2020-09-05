@@ -49,6 +49,11 @@ defineParsers = do
     defineParseIfTerm
     defineParseIfTermWS
     defineParseIfTerms
+    defineParseRBrace
+    defineParseLBrace
+    defineParseLBraceWS
+    defineParseBlockEnd
+    defineParseBlock
 
 -- Parses input. Skips whitespace, control characters, etc. 
 -- Stops at the first non-such char and pushes it on the stack.
@@ -124,23 +129,19 @@ defineRdHeadW8 = defFunBasic "read_head_w8" body
         asm $ setLabel "RPC_ERROR"
         ppush $ I32 0 -- Fail
 
-callRequiredParser fromParser parserName = do
+callRequiredParser parserName failLabel = do
     callLabel parserName
     ppop rax
     cmp rax $ I32 parse_reject
     jeNear failLabel
     cmp rax $ I32 parse_fail
     jeNear failLabel
-  where
-    failLabel = fromParser ++ "_fail"
 
-callOptionalParser fromParser parserName = do
+callOptionalParser parserName failLabel = do
     callLabel parserName
     ppop rax
     cmp rax $ I32 parse_fail
     jeNear failLabel
-  where
-    failLabel = fromParser ++ "_fail"
         
 parseTerminal parserName testInput dataProcess = 
     defFunBasic parserName body
@@ -196,7 +197,7 @@ parseAlt parserName parser1 process1 parser2 process2 =
 
         doc "The first parser accepted the input. Process it and return"
         doc "without calling the other parser."
-        body1
+        body1 failLabel
         ppush $ I32 parse_success
         ret
 
@@ -216,17 +217,17 @@ parseAlt parserName parser1 process1 parser2 process2 =
         jeNear rejectLabel2
 
         doc "The second parser accepted the input. Process it"
-        body2
+        body2 failLabel
         ppush $ I32 parse_success
         ret
 
         setLabel failLabel
         doc $ "Parser " ++ parser1 ++ " | " ++ parser2 ++ " has failed!"
         ppush $ I32 parse_fail
+        ret
 
         setLabel rejectLabel2
         ppush $ I32 parse_reject
-
         ret
 
 -- Parser "composer" A*
@@ -443,6 +444,34 @@ inputTestWS reg rejectLabel = do
     jmpLabel rejectLabel
 
     setLabel okLabel
+
+inputTestRBrace reg rejectLabel = do
+    doc "Is the char }?"
+    cmp reg $ asciiI32 '}'
+    jneNear rejectLabel
+
+inputTestLBrace reg rejectLabel = do
+    doc "Is the char {?"
+    cmp reg $ asciiI32 '{'
+    jneNear rejectLabel
+
+defineParseRBrace = do
+    parseTerminal "parse_rbrace" inputTestRBrace noop
+
+defineParseLBrace = do
+    parseTerminal "parse_lbrace" inputTestLBrace noop
+
+defineParseLBraceWS = do
+    parseSequence "parse_lbrace_ws"
+        "parse_lbrace" "parse_wss" noop noop
+
+defineParseBlockEnd = do
+    parseSequence "parse_block_end" 
+        "parse_emit_if_terms" "parse_rbrace" noop noop
+
+defineParseBlock = do
+    parseSequence "parse_block"
+        "parse_lbrace_ws" "parse_block_end" noop noop
     
 defineParse09 :: X86_64 () 
 defineParse09 = do
@@ -577,9 +606,9 @@ defineParseIfTerm =
         "parse_integer"    processInteger
         "parse_identifier" processIdentifier
   where
-    processInteger = do
+    processInteger _ = do
         callLabel "emit_lit_64"
-    processIdentifier = do
+    processIdentifier failLabel = do
         doc "parse_identifier has succeeded."
         doc "Check the kind of identifier that we have..."
         writeMsgHelper "Identifier case\n"
@@ -594,9 +623,19 @@ defineParseIfTerm =
         cmp rax rbx
         jneNear "parse_if_term_not_if"
 
+        writeMsgHelper "If term case\n"
         doc "Parsing an if term!"
-        -- callLabel "parse_block"
-        writeMsgHelper "IF block not implemented; todo: call parse_block! "
+
+        doc "Consume all whitespace after the if-term"
+        callOptionalParser "parse_wss" failLabel
+
+        -- writeMsgHelper "Cont char:\n"
+        -- ppushContCharW8
+
+        doc "Call parse_block"
+        callRequiredParser  "parse_block" failLabel
+
+        -- writeMsgHelper "IF block not implemented; todo: call parse_block! "
 
         setLabel "parse_if_term_not_if"
 
@@ -611,6 +650,7 @@ data ParseTest = ParseTest
         
 resultAscii = Right . ascii
 
+-- TODO: Measure/Prove that the test coverage is 100%
 parserTests = [
         ParseTest "parse_09" "?" parse_reject  '?'
             []
@@ -704,18 +744,26 @@ parserTests = [
             []
     ,   ParseTest "parse_emit_if_terms" "x1 64 x2?" parse_success '?'
             []
-    {- ,   ParseTest "parse_block"     "{d1 123 d2 d3}?" parse_success  '?'
+    ,   ParseTest "parse_rbrace" "}?" parse_success '?' 
             []
-        -- TODO:
-        -- TODO: See also: -v3/test_programs/test_suite_parse_if_term.program
+    ,   ParseTest "parse_rbrace" "?" parse_reject '?'
+            []
+    ,   ParseTest "parse_block"     "{ d1 123 d2 d3 }?" parse_success  '?'
+            []
+    ,   ParseTest "parse_block"     "{d1 123 d2 d3 }?" parse_success  '?'
+            []
+    ,   ParseTest "parse_block"     "{d1 123 d2 d3}?" parse_success  '?'
+            []
+    ,   ParseTest "parse_block"     "{d1 123 d2 d3} " parse_success ' '
+            []
     ,   ParseTest "parse_emit_if_term"   "if {d1 123 d2 d3}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term"   "if {?" parse_fail '?'
+    ,   ParseTest "parse_emit_if_term"   "if{d1 123 d2 d3}?" parse_success '?'
             []
     ,   ParseTest "parse_emit_if_term"   "if {?" parse_fail '?'
             []
-        -}
-
+    ,   ParseTest "parse_emit_if_term"   "if ?" parse_fail '?'
+            []
     ]
 
 getInput (ParseTest _ s _ _ _) = s
