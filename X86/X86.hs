@@ -15,7 +15,7 @@ import Data.Char (ord)
 -- Documentation at the X86 programming level (asm instructions)
 
 docX86 :: String -> X86_64 ()
-docX86 = doc . ("X86: " ++)
+docX86 = doc . ("  (x86) " ++)
 
 imm64 :: Word64 -> X86_64 ()
 imm64 = asm . bemit . Prelude.map SWord8 . bytes putWord64le

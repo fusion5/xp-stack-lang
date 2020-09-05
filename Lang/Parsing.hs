@@ -18,6 +18,38 @@ parse_reject       = 1 -- Parser rejected the input. Use the specific character
 parse_success      = 2 -- Parser succeeded and consumed all input. 
                        -- Further input should be requested.
 
+noop = return ()
+
+contCharR8 = r8
+
+movContCharTo reg = do
+    xor reg reg
+    mov contCharR8 reg
+
+ppopContChar = do
+    ppop contCharR8
+
+ppushContCharW8 = do
+    cpush rax
+    mov rax contCharR8
+    ppush al
+    cpop rax
+
+defineParsers = do
+    defineRdHeadW8
+    defineParseIdentifier
+    defineParseAZ09_s
+    defineParseAZ09_
+    defineParseAZ_
+    defineParseWhitespace
+    defineParseWhitespaceSeq
+    defineParse09
+    defineParse09s
+    defineParseInteger
+    defineParseIfTerm
+    defineParseIfTermWS
+    defineParseIfTerms
+
 -- Parses input. Skips whitespace, control characters, etc. 
 -- Stops at the first non-such char and pushes it on the stack.
 -- Type : -> :w8        :w64
@@ -60,16 +92,16 @@ defineRdHeadW8 = defFunBasic "read_head_w8" body
         ppush $ I32 0 -- Fail
 -}
 
--- Parses input. 
--- Type : -> :w8        :w64
--- Func : -> :read_char:success
+-- Reads 1 character of input into the r8 register. 
+-- Type : -> :w64
+-- Func : -> :success
 defineRdHeadW8 :: X86_64 ()
 defineRdHeadW8 = defFunBasic "read_head_w8" body
   where
     body = do
-        doc "Allocate 1 byte on the parameter-stack in which our"
+        doc "Allocate 8 bytes on the parameter-stack in which our"
         doc "read character is placed:"
-        ppush $ I8 0x00
+        ppush $ I32 0x00
 
         doc "Please read"
         mov rax $ I64 $ fromIntegral linux_sys_read
@@ -80,6 +112,8 @@ defineRdHeadW8 = defFunBasic "read_head_w8" body
         doc "Into the pstack"
         mov rcx rsi
         int
+
+        ppopContChar
 
         cmp rax $ I32 0x00
         jeNear "RPC_ERROR"
@@ -89,167 +123,6 @@ defineRdHeadW8 = defFunBasic "read_head_w8" body
 
         asm $ setLabel "RPC_ERROR"
         ppush $ I32 0 -- Fail
-
-{-
-defineRdTailW8 :: X86_64()
-defineRdTailW8 = defFunBasic "read_tail_w8" body
-  where
-    body = do
-        doc "READ_TAIL_W8 reads characters until a non-printable"
-        doc "character is encountered."
-        doc "It pushes on the stack an array of w8s then it pushes a"
-        doc "w64 indicating how many chars have been read,"
-        doc "followed by a w64 indicating success or failure."
-        doc "r15 counts the chars that are successfully read."
-        xor r15 r15
-        asm $ setLabel "READ_TAIL_WHILE"
-
-        doc "Allocate 1 byte on the stack to read into"
-        ppush $ I8 0x00
-        doc "Please read"
-        mov rax $ I64 $ fromIntegral linux_sys_read
-        doc "1 char"
-        mov rdx $ I64 0x01 
-        doc "From stdin"
-        xor rbx rbx
-        doc "Into the pstack"
-        mov rcx rsi
-        int
-
-        cmp rax $ I32 0x00
-        je "READ_TAIL_W8_ERROR"
-       
-        doc "Place the char we've just read into rax"
-        xor rax rax
-        ptopW8 al
-
-        doc "Probe the char we just read if it's non-printable "
-        doc "then break the loop:"
-        cmp rax $ asciiI32 ' ' -- Space or less, skip
-        jleNear "READ_TAIL_W8_BREAK" 
-        cmp rax $ I32 0x7F -- ESC
-        jeNear  "READ_TAIL_W8_BREAK"
-
-        inc r15
-        
-        doc "Repeat"
-        jmpLabel "READ_TAIL_WHILE"
-
-        asm $ setLabel "READ_TAIL_W8_BREAK"
-        doc "Free the stack from the last allocation:"
-        ppopW8 al
-        doc "Number of chars read:"
-        ppush $ r15
-        doc "Success:"
-        ppush $ I32 1
-        ret
-
-        asm $ setLabel "READ_TAIL_W8_ERROR"
-        doc "Free the stack from the last allocation:"
-        ppopW8 al
-        doc "Number of chars read:"
-        ppush $ r15
-        doc "Error:"
-        ppush $ I32 0
-        ret
-
-defineRdTailAZW8 :: X86_64 ()
-defineRdTailAZW8 = defFunBasic "read_tail_az_w8" body
-  where
-    body = do
-        doc "READ_TAIL_AZ_W8 reads characters until a non[a-z,0-9,_]"
-        doc "character is encountered."
-        doc "It pushes on the stack an array of w8s then it pushes a"
-        doc "w64 indicating how many chars have been read,"
-        doc "followed by a w64 indicating success or failure."
-        doc "r15 counts the chars that are successfully read."
-        xor r15 r15
-        asm $ setLabel "READ_TAIL_AZ_WHILE"
-
-        doc "Allocate 1 byte on the stack to read into"
-        ppush $ I8 0x00
-        doc "Please read"
-        mov rax $ I64 $ fromIntegral linux_sys_read
-        doc "1 char"
-        mov rdx $ I64 0x01 
-        doc "From stdin"
-        xor rbx rbx
-        doc "Into the pstack"
-        mov rcx rsi
-        int
-
-        cmp rax $ I32 0x00
-        jeNear "READ_TAIL_AZ_W8_ERROR"
-       
-        doc "Place the char we've just read into rax"
-        xor rax rax
-        ptopW8 al
-
-        doc "Probe the char we just read if it's non-a-z "
-        doc "then break the loop:"
-        cmp rax $ asciiI32 'a'
-        jlNear "READ_TAIL_AZ_W8_NON_AZ" 
-        cmp rax $ asciiI32 'z'
-        jgNear "READ_TAIL_AZ_W8_NON_AZ"
-
-        doc "It's an a-z. Repeat"
-        inc r15
-        jmpLabel "READ_TAIL_AZ_WHILE"
-
-        setLabel "READ_TAIL_AZ_W8_NON_AZ"
-        cmp rax $ asciiI32 '0'
-        jlNear "READ_TAIL_AZ_W8_NON_09" 
-        cmp rax $ asciiI32 '9'
-        jgNear "READ_TAIL_AZ_W8_NON_09"
-
-        doc "It's a 0-9. Repeat"
-        inc r15
-        jmpLabel "READ_TAIL_AZ_WHILE"
-       
-        setLabel "READ_TAIL_AZ_W8_NON_09"
-        cmp rax $ asciiI32 '_'
-        jneNear "READ_TAIL_AZ_W8_NON__"
-
-        doc "It's an underscore. Repeat"
-        inc r15
-        jmpLabel "READ_TAIL_AZ_WHILE"
-
-        setLabel "READ_TAIL_AZ_W8_NON__"
-
-        doc "Check whether it's a non-printable character."
-        doc "If so then end with success."
-
-        cmp rax $ asciiI32 ' ' -- Space or less, skip
-        jleNear "READ_TAIL_W8_IDENTIFIER_SUCCESS" 
-        cmp rax $ I32 0x7F -- ESC
-        jeNear  "READ_TAIL_W8_IDENTIFIER_SUCCESS"
-
-        ppopW8 al
-        doc "Number of chars read:"
-        ppush $ r15
-        doc "Continuation character for the next parser:"
-        ppush al
-        ppush $ I32 parse_success
-        ret
-
-        setLabel "READ_TAIL_W8_IDENTIFIER_SUCCESS"
-        doc "Drop the whitespace char and succeed."
-        pdropW8 1
-
-        doc "Number of chars read (part of the data):"
-        ppush $ r15
-
-        doc "Success:"
-        ppush $ I32 parse_success
-        ret
-
-        setLabel "READ_TAIL_AZ_W8_ERROR"
-        doc "Free the stack from the last allocation:"
-        ppopW8 al
-        doc "Error:"
-        ppush $ I32 parse_fail
-        ret
--}
 
 callRequiredParser fromParser parserName = do
     callLabel parserName
@@ -269,121 +142,216 @@ callOptionalParser fromParser parserName = do
   where
     failLabel = fromParser ++ "_fail"
         
-callStarParser fromParser subParserLabel = do
-    setLabel loopLabel
-    callLabel subParserLabel
-    ppop rax
-
-    doc "Has the parser succeeded? If so then again!"
-    doc "A call to read_head_w8 isn't necessary because the"
-    doc "sub-parser performs that."
-    cmp rax $ I32 parse_success
-    jeNear loopLabel
-
-    cmp rax $ I32 parse_fail
-    jeNear $ fromParser ++ "_fail"
-
-    doc "Otherwise, "
-    doc "the parser has rejected the input: it doesn't match."
-    doc "But that doesn't mean that fromParser should fail, "
-    doc "just do nothing, because that doesn't consitute a failure"
-    doc "and we just need to call the next parser in the chain (if any)."
-    doc "If there is no other parser in the chain, the control flow"
-    doc "returns a success."
-
-  where
-    loopLabel = fromParser ++ "_loop_" ++ subParserLabel
-
--- Input  :w8 (a char taken from stdin)
--- Output :w64 parse_fail (on parse failure)
---     or :w8 continuation_char:w64 parse_reject (input rejection, no data!)
---     or :...data...:w8 continuation_char:w64 parse_success (on parse success)
--- Side effect, may consume input from stdin
-genericParser :: String 
-    -> (Val -> String -> X86_64 ())
-    -> X86_64 () -> X86_64 () -> X86_64 ()
-genericParser 
-    parserName  -- The name of the parser (String)
-    testInput   -- Test the continuation char against this parser
-    subParsers  -- Optional or required parsers.
-    dataProcess -- What to do once the input is fully accepted.
-      = defFunBasic parserName body 
-  where 
+parseTerminal parserName testInput dataProcess = 
+    defFunBasic parserName body
+ where
     body = do
-        doc "Test whether this parser accepts the input."
-        doc "If it doesn't, then jump to the _reject label."
-        xor rax rax
+        doc "Parse a terminal that doesn't have any subparser."
 
-        -- writeMsgHelper $ "Top char for parser " ++ parserName ++ "\n"
-        -- callLabel "dbg_dump_ptop_w8"
-        ppeerW8 0 al
-        testInput rax parserName
+        let rejectLabel = parserName ++ "_reject"
+        let failLabel   = parserName ++ "_fail"
 
-        doc "The first char is acceptable: leave it on the stack,"
-        doc "and read one more character to pass on to any sub-parsers:"
+        testInput contCharR8 rejectLabel
+        doc "The top char on the stack matches this parser:"
 
+        dataProcess
+
+        doc "Consume another char from the input, for the next parser."
         callLabel "read_head_w8"
-        -- assertPtop 1 "read_head_w8 failed\n"
         pdrop 1
 
-        doc "Call the optional/required subparsers, if any."
-        doc "They too are expected to leave a continuation character on the stack."
-        doc "If any of the subparsers fails, they jump to the _fail point;"
-        doc "thus, failure of a sub-parser is propagated to the parent parser."
-        subParsers
-
-        doc "No failure occured; process the input on the stack and succeed."
-        doc "The processing code must leave the continuation character as the"
-        doc "last character on the stack to observe the parser contract."
-        doc "TODO: Think about whether it would be cleaner to keep the cont. char"
-        doc "on the stack rather than to move it around on the stack..."
-        doc "Of course, it is possible in general that the processing step "
-        doc "might cause a failure and to jump to the _fail label. But it should "
-        doc "never jump to _reject: only the testInput step should do that."
-        dataProcess 
-
-        doc "Successful processing: return success."
         ppush $ I32 parse_success
         ret
 
-        setLabel $ parserName ++ "_reject"
-        doc "Rejected input: this parser doesn't match the input."
-        doc "The parser cannot even begin to process this input."
+        setLabel $ rejectLabel
+        doc "Rejected input: this parser doesn't match the top"
+        doc "character on the stack:"
         ppush $ I32 parse_reject
+
+-- Parser "composer" A | B
+parseAlt parserName parser1 process1 parser2 process2 =
+    defFunBasic parserName body 
+  where
+    body = do
+        parserCascade ("parse_integer",    process1)
+                      ("parse_identifier", process2)
+    parserCascade (parser1, body1) (parser2, body2) = do
+        doc $ "Try parser " ++ parser1 ++ " as part of a cascade."
+        doc $ "If that rejects the input, then try parser " ++ parser2
+        doc $ "If A and B are parsers then this does A | B."
+        callBody parser1
+        ppop rax
+
+        doc "Has the first parser failed? Fail the sequence."
+        failLabel <- asm $ freshLabelWithPrefix (
+            "parser_seq_fail_" ++ parser1 ++ "_")
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        doc "Has the first parser rejected the input?"
+        rejectLabel1 <- asm $ freshLabelWithPrefix (
+            "parser_seq_reject_" ++ parser1 ++ "_")
+        cmp rax $ I32 parse_reject
+        jeNear rejectLabel1
+
+        doc "The first parser accepted the input. Process it and return"
+        doc "without calling the other parser."
+        body1
+        ppush $ I32 parse_success
         ret
 
-        setLabel $ parserName ++ "_fail"
-        doc "Malformed input: the parser has began to match the input,"
-        doc "but it has rejected it resulting in a failure."
+        setLabel rejectLabel1
+        doc $ "Parser " ++ parser1 ++ " rejected its input--try " ++ parser2
+        callBody parser2 
+        doc $ "Evaluate the result from " ++ parser2    
+        ppop rax
+
+        rejectLabel2 <- asm $ freshLabelWithPrefix (
+            "parser_seq_reject_" ++ parser2 ++ "_")
+        doc $ "Has " ++ parser2 ++ " rejected its input or failed? Then also fail."
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        cmp rax $ I32 parse_reject
+        jeNear rejectLabel2
+
+        doc "The second parser accepted the input. Process it"
+        body2
+        ppush $ I32 parse_success
+        ret
+
+        setLabel failLabel
+        doc $ "Parser " ++ parser1 ++ " | " ++ parser2 ++ " has failed!"
+        ppush $ I32 parse_fail
+
+        setLabel rejectLabel2
+        ppush $ I32 parse_reject
+
+        ret
+
+-- Parser "composer" A*
+parseStar parserName subParserName init dataProcess =
+    defFunBasic parserName body
+  where
+    body = do
+        doc $ "Parse a 0..n sequence of parser " ++ subParserName
+
+        doc "Initialise the state"
+        init
+        doc "Begin the loop"
+        setLabel loopLabel
+        do
+            doc "Call the subparser"
+            callLabel subParserName
+
+            doc "Retrieve the last parse result from the stack"
+            ppop rax
+
+            doc "Has the subparser succeeded? If so then try again!"
+            doc "(A call to read_head_w8 isn't necessary because the"
+            doc "sub-parser performs that.)"
+            cmp rax $ I32 parse_success
+            jeNear loopLabel
+        doc "End loop"
+
+        doc "The subparser has failed. Fail the star parser immediately."
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        doc "Otherwise the last parser has rejected the input."
+        doc "Before returning, call dataProcess."
+        dataProcess
+
+        doc "The star parser is successful, even though the last parser has"
+        doc "rejected the input."
+        ppush $ I32 parse_success
+        ret
+
+        setLabel failLabel
+        ppush $ I32 parse_fail
+
+    loopLabel  = parserName ++ "_loop"
+    failLabel  = parserName ++ "_fail"
+
+-- Parser "composer" A B
+parseSequence parserName subParser1 subParser2 init process = 
+    defFunBasic parserName body
+  where
+    failLabel   = parserName ++ "_fail"
+    rejectLabel = parserName ++ "_reject"
+    body = do
+        doc $ "First call " ++ subParser1 ++ " and then call " ++ 
+            subParser2 ++ ". Both are expected to succeed. "
+
+        doc "Initialisation before parsing starts"
+        init 
+
+        callLabel subParser1
+        doc "Retrieve the result of parser1 from the stack"
+        ppop rax
+
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        cmp rax $ I32 parse_reject
+        jeNear rejectLabel
+
+        doc "Try the next parser, which must succeed as well."
+        callLabel subParser2
+        doc "Retrieve the result of parser2 from the stack"
+        ppop rax
+
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        doc "If the second parser rejects, then fail because"
+        doc "the first parser matching imples the second one too."
+        cmp rax $ I32 parse_reject
+        jeNear failLabel
+
+        doc "Both parsers have succeeded."
+        process 
+
+        ppush $ I32 parse_success
+        ret
+
+        setLabel failLabel
         ppush $ I32 parse_fail
         ret
 
-decimalInputTest reg parserName = do
+        setLabel rejectLabel
+        ppush $ I32 parse_reject
+        ret 
+    
+{- acceptAll reg parserName = do
+    doc "Accept all input (do not test)" -}
+
+inputTest_decimal reg rejectLabel = do
     doc "Is the char in the register in 0-9?"
     doc "If not, then reject"
 
     doc "Less than ASCII code 0?"
     cmp reg $ asciiI32 '0'
-    jlNear  $ parserName ++ "_reject"
+    jlNear  $ rejectLabel
 
     doc "Is the char greater than ASCII code 9?"
     cmp reg $ asciiI32 '9'
-    jgNear  $ parserName ++ "_reject"
+    jgNear  $ rejectLabel
 
-azInputTest reg parserName = do
+inputTest_az reg rejectLabel = do
     doc "Is the char in the register in a-z?"
     doc "If not, then reject"
 
     doc "Less than ASCII code a?"
     cmp reg $ asciiI32 'a'
-    jlNear  $ parserName ++ "_reject"
+    jlNear  $ rejectLabel
 
     doc "Is the char greater than ASCII code z?"
     cmp reg $ asciiI32 'z'
-    jgNear  $ parserName ++ "_reject"
+    jgNear  $ rejectLabel
 
-az09_InputTest reg parserName = do
-    doc "Is the char in the register in {a..z, 0..9, _}?"
+inputTest_az09 reg parserName = do
+    doc "Is the char from the register in {a..z, 0..9}?"
     doc "If not, then reject"
     cmp reg $ asciiI32 'a'
     jlNear  $ parserName ++ "_non_az"
@@ -397,128 +365,155 @@ az09_InputTest reg parserName = do
     setLabel $ parserName ++ "_non_az"
 
     cmp reg $ asciiI32 '0'
-    jlNear  $ parserName ++ "_non_09"
+    jlNear  $ parserName ++ "_reject"
 
     cmp reg $ asciiI32 '9'
-    jgNear  $ parserName ++ "_non_09"
+    jgNear  $ parserName ++ "_reject"
 
     doc "The input is within 0-9, do not reject"
-    jmpLabel $ parserName ++ "_ok"
+    setLabel $ parserName ++ "_ok"
 
-    setLabel $ parserName ++ "_non_09"
+inputTest_az_ reg rejectLabel = do
+    doc "Is the char in the register in {a..z, _}?"
+    doc "If not, then reject"
+    nonAZLabel <- asm $ freshLabelWithPrefix "inputTest_az__non_az_"
+    okLabel    <- asm $ freshLabelWithPrefix "inputTest_az__ok_"
+    cmp reg $ asciiI32 'a'
+    jlNear nonAZLabel
+
+    cmp reg $ asciiI32 'z'
+    jgNear nonAZLabel
+
+    doc "The input is within a-z, do not reject"
+    jmpLabel okLabel
+
+    setLabel nonAZLabel
+    doc "Unless it's an underscore, reject the input."
+    cmp reg $ asciiI32 '_'
+    jneNear rejectLabel
+
+    setLabel okLabel
+
+inputTest_az09_ reg rejectLabel = do
+    doc "Is the char in the register in {a..z, 0..9, _}?"
+    doc "If not, then reject"
+    nonAZLabel <- asm $ freshLabelWithPrefix "inputTest_az09__non_az_"
+    non09Label <- asm $ freshLabelWithPrefix "inputTest_az09__non_09_"
+    okLabel    <- asm $ freshLabelWithPrefix "inputTest_az09__ok_"
+    cmp reg $ asciiI32 'a'
+    jlNear nonAZLabel
+
+    cmp reg $ asciiI32 'z'
+    jgNear nonAZLabel
+
+    doc "The input is within a-z, do not reject"
+    jmpLabel okLabel
+
+    setLabel nonAZLabel
+
+    cmp reg $ asciiI32 '0'
+    jlNear non09Label
+
+    cmp reg $ asciiI32 '9'
+    jgNear non09Label
+
+    doc "The input is within 0-9, do not reject"
+    jmpLabel okLabel
+
+    setLabel non09Label
 
     doc "Unless it's an underscore, reject the input."
     cmp reg $ asciiI32 '_'
-    jneNear $ parserName ++ "_reject"
+    jneNear rejectLabel
 
-    setLabel $ parserName ++ "_ok"
+    setLabel okLabel
 
-wsInputTest reg parserName = do
+inputTestWS reg rejectLabel = do
     doc "Is the char ESC or greater? Then ok"
     cmp reg $ I32 0x7F --ESC
-    jgNear $ parserName ++ "_ok"
+    
+    okLabel <- asm $ freshLabelWithPrefix "wsInputTest_ok_"
+    jgNear okLabel
 
     doc "Is the char space or less? Then ok"
     cmp reg $ asciiI32 ' '
-    jleNear $ parserName ++ "_ok"    
+    jleNear okLabel
 
     doc "It's not whitespace. Reject!"
-    jmpLabel $ parserName ++ "_reject"
+    jmpLabel rejectLabel
 
-    setLabel $ parserName ++ "_ok"
+    setLabel okLabel
     
 defineParse09 :: X86_64 () 
 defineParse09 = do
     doc "Parse a single char from {0-9} and inc. r15 (the char counter)"
-    genericParser "parse_09" test subparsers process 
+    parseTerminal "parse_09" test process 
   where
-    test reg parserName = do
-        decimalInputTest reg parserName
+    test = inputTest_decimal 
+    process = do
         inc r15
-    subparsers = return ()
-    process    = return ()
-    
+        doc "Place the continuation char to the stack as a w8"
+        ppushContCharW8
+
+defineParse09s :: X86_64 () 
+defineParse09s = parseStar "parse_09s" "parse_09" noop noop 
 
 defineParseAZ09_ :: X86_64 ()
 defineParseAZ09_ = do
     doc "Parse a single char from {a-z, 0-9, _} anc inc. r15 (the char counter)"
-    genericParser "parse_az09_" test subparsers process
+    parseTerminal "parse_az09_" test process
   where
-    test reg parserName = do
-        az09_InputTest reg parserName
+    test = inputTest_az09_
+    process = do
         inc r15
-    subparsers = return ()
-    process    = return ()
+        doc "Place the continuation char to the stack as a w8"
+        ppushContCharW8
+
+defineParseAZ_ :: X86_64 ()
+defineParseAZ_ = do
+    doc "Parse a single char from {a-z, _} anc inc. r15 (the char counter)"
+    parseTerminal "parse_az_" test process
+  where
+    test = inputTest_az_
+    process = do
+        inc r15
+        doc "Place the continuation char to the stack as a w8"
+        ppushContCharW8
 
 defineParseWhitespace :: X86_64 ()
 defineParseWhitespace = do
     doc "Parse a single whitespace character without leaving it on the stack."
-    genericParser "parse_ws" test subparsers process
+    parseTerminal "parse_ws" inputTestWS noop 
+
+defineParseWhitespaceSeq = 
+    parseStar "parse_wss" "parse_ws" noop noop 
+
+defineParseAZ09_s :: X86_64 ()
+defineParseAZ09_s = parseStar "parse_az09_s" "parse_az09_" noop noop 
+
+defineParseIdentifier = do
+    doc "[a-z_][a-z0-9_]*"
+    parseSequence "parse_identifier" "parse_az_" "parse_az09_s" init process
   where
-    test       = wsInputTest
-    subparsers = return ()
+    init = do
+        doc "Use r15 as a character counter. Initialize to 0."
+        doc "parse_az_ and parse_az09_ increment r15 each time they get called."
+        mov r15 $ I64 0
     process = do
-        doc "We do this to ignore the space."
-        doc "Drop the space allowed by the input test" 
-        ppopW8 al 
-        doc "Drop the space allowed by the input test" 
-        pdropW8 1 
-        doc "Restore the continuation chr. on the stack"
-        ppush al 
-
-defineParseWhitespaceSeq :: X86_64 ()
-defineParseWhitespaceSeq = do
-    doc $ "Parse one or more whitespace characters without leaving them " ++
-          "on the stack."
-    genericParser "parse_wss" test subparsers process
+        ppush r15
+   
+defineParseInteger = do
+    doc "[0-9][0-9]*"
+    parseSequence "parse_integer" "parse_09" "parse_09s" init process
   where
-    test       = wsInputTest
-    subparsers = callStarParser "parse_wss" "parse_ws"
-    process = do
-        doc "We do this to ignore the space."
-        doc "Backup the continuation chr."
-        ppopW8 al 
-        doc "Drop the space allowed by the input test" 
-        pdropW8 1
-        doc "Restore the continuation chr. on the stack"
-        ppush al 
-
-defineParseIdentifier :: X86_64 ()
-defineParseIdentifier = genericParser "parse_identifier" test subparsers process
-  where
-    test       = azInputTest 
-    subparsers = do
-        doc "Use r15 as a character counter"
-        mov r15 $ I64 1
-        callStarParser     "parse_identifier" "parse_az09_"
-        callOptionalParser "parse_identifier" "parse_wss"
-    process = do 
-        doc "Increment the read_tail_az_w8 count to account for " 
-        doc "the first character."
-        doc "Backup the continuation chr."
-        ppopW8 al 
-        doc "Add the character count to the stack."
-        ppush r15 
-        doc "Restore the continuation chr. on the stack"
-        ppush al  
-
-defineParseInteger :: X86_64 ()
-defineParseInteger = genericParser "parse_integer" test subparsers process where
-    test       = decimalInputTest
-    subparsers = do
-        doc "Use r15 as a character counter, initialize it with 1."
-        mov r15 $ I64 1 
+    init = do
+        doc "Use r15 as a character counter, initialize it with 0."
+        mov r15 $ I64 0
         doc "parse_09 increments r15 on each successful parse."
-        callStarParser     "parse_integer" "parse_09"
-        callOptionalParser "parse_integer" "parse_wss"
     process = do
         doc "We have the 0-9 ascii chars on the stack and we wish to leave an"
         doc "integer there, of type w64. The parser might fail though, if the "
         doc "number is larger than a w64 can hold..."
-        
-        doc "Backup the continuation char into rbx"
-        xor rbx rbx
-        ppopW8 bl
         
         doc "rcx holds a power of 10 (multiplier). It starts from number 1."
         mov rcx $ I64 1
@@ -544,6 +539,8 @@ defineParseInteger = genericParser "parse_integer" test subparsers process where
 
             doc "Multiply rax by the current power of 10 stored in rcx."
             mul rcx
+            -- TODO: Prove that this cannot overflow if we check 
+            -- the add overflow below.
             joNear "parse_integer_fail"
 
             doc "Add rax to the r10 accumulator"
@@ -556,6 +553,7 @@ defineParseInteger = genericParser "parse_integer" test subparsers process where
             mov rdx $ I64 10
             mov rax rcx
             mul rdx
+            -- TODO: Check how mul reports overflow!
             -- joNear "parse_integer_fail"
             mov rcx rax
             
@@ -565,9 +563,42 @@ defineParseInteger = genericParser "parse_integer" test subparsers process where
         
         doc "Push the multiplication result"
         ppush r10
-        doc "Restore the continuation char"
-        ppush bl
+   
+defineParseIfTermWS = 
+    parseSequence "parse_emit_if_term_ws" 
+        "parse_emit_if_term" "parse_wss" noop noop
 
+defineParseIfTerms = 
+    parseStar "parse_emit_if_terms" 
+        "parse_emit_if_term_ws" noop noop
+
+defineParseIfTerm = 
+    parseAlt "parse_emit_if_term" 
+        "parse_integer"    processInteger
+        "parse_identifier" processIdentifier
+  where
+    processInteger = do
+        callLabel "emit_lit_64"
+    processIdentifier = do
+        doc "parse_identifier has succeeded."
+        doc "Check the kind of identifier that we have..."
+        writeMsgHelper "Identifier case\n"
+
+        callLabel "term_hash"
+        doc "Place the hash in rax"
+        ppop  rax 
+
+        doc "Now test our identifier against various options:"
+        doc "Does it equal the hash of 'if'?"
+        mov rbx (I64 $ fnv1s "if")
+        cmp rax rbx
+        jneNear "parse_if_term_not_if"
+
+        doc "Parsing an if term!"
+        -- callLabel "parse_block"
+        writeMsgHelper "IF block not implemented; todo: call parse_block! "
+
+        setLabel "parse_if_term_not_if"
 
 data ParseTest = ParseTest
     String  -- Parser label (function name)
@@ -578,14 +609,26 @@ data ParseTest = ParseTest
                           -- on success: the data that the parser leaves
                           -- behind.
         
+resultAscii = Right . ascii
+
 parserTests = [
-        ParseTest "parse_ws"         "?"     parse_reject  '?'
+        ParseTest "parse_09" "?" parse_reject  '?'
             []
-    ,   ParseTest "parse_ws"         " ?"    parse_success '?'
+    ,   ParseTest "parse_09" "0?" parse_success '?'
+            [resultAscii '0']
+    ,   ParseTest "parse_09" "9?" parse_success '?'
+            [resultAscii '9']
+    ,   ParseTest "parse_09" "/" parse_reject '/'
             []
-    ,   ParseTest "parse_wss"         "?"    parse_reject  '?'
+    ,   ParseTest "parse_09" ":" parse_reject ':'
             []
-    ,   ParseTest "parse_wss"         "   ?" parse_success '?'
+    ,   ParseTest "parse_ws" "?" parse_reject  '?'
+            []
+    ,   ParseTest "parse_ws" " ?" parse_success '?'
+            []
+    ,   ParseTest "parse_wss" "?" parse_success '?'
+            []
+    ,   ParseTest "parse_wss" "   ?" parse_success '?'
             []
     ,   ParseTest "parse_az09_"      "a?"    parse_success '?'
             [Right (ascii 'a')]
@@ -596,8 +639,6 @@ parserTests = [
     ,   ParseTest "parse_az09_"      "{"     parse_reject  '{'
             []
     ,   ParseTest "parse_identifier" "abc?"  parse_success '?'
-            [Left 3, Right (ascii 'c'), Right (ascii 'b'), Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "abc ?" parse_success '?'
             [Left 3, Right (ascii 'c'), Right (ascii 'b'), Right (ascii 'a')]
     ,   ParseTest "parse_identifier" "a?"    parse_success '?'
             [Left 1, Right (ascii 'a')]
@@ -625,26 +666,56 @@ parserTests = [
             [Left 9]
     ,   ParseTest "parse_integer"    "0?"    parse_success '?'
             [Left 0]
-    ,   ParseTest "parse_integer"    "0 ?"   parse_success '?'
-            [Left 0]
-    ,   ParseTest "parse_integer"    "9 ?"   parse_success '?'
-            [Left 9]
     ,   ParseTest "parse_integer"    "1234?" parse_success '?'
             [Left 1234]
     ,   ParseTest "parse_integer"    "12a"   parse_success 'a'
             [Left 12]
-
-    ,   ParseTest "parse_integer"    (show (2^32 - 1) ++ "?")   parse_success '?'
+    ,   ParseTest "parse_integer" (show (2^32 - 1) ++ "?") parse_success '?'
             [Left $ fromIntegral $ 2^32 - 1] 
-
-    ,   ParseTest "parse_integer"    (show (2^32) ++ "?")       parse_success '?'
+    ,   ParseTest "parse_integer"    (show (2^32) ++ "?") parse_success '?'
             [Left $ fromIntegral $ 2^32]
-
-    ,   ParseTest "parse_integer"    (show (2^64 - 1) ++ "?")   parse_success '?'
+    ,   ParseTest "parse_integer"    (show (2^64 - 1) ++ "?") parse_success '?'
             [Left $ fromIntegral $ 2^64 - 1]
-
-    ,   ParseTest "parse_integer"    (show (2^64) ++ "?")       parse_fail '?'
+    ,   ParseTest "parse_integer"    (show (2^64) ++ "?") parse_fail '?'
             []
+    ,   ParseTest "parse_emit_if_term" "?" parse_reject '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "hey?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "a?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "x1?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "0?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "1337?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term_ws" "1337 ?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term_ws" "?" parse_reject '?'
+            []
+    ,   ParseTest "parse_emit_if_term_ws" "test ?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_terms" "?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_terms" "bbc?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_terms" "64?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_terms" "x1 64 x2?" parse_success '?'
+            []
+    {- ,   ParseTest "parse_block"     "{d1 123 d2 d3}?" parse_success  '?'
+            []
+        -- TODO:
+        -- TODO: See also: -v3/test_programs/test_suite_parse_if_term.program
+    ,   ParseTest "parse_emit_if_term"   "if {d1 123 d2 d3}?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_term"   "if {?" parse_fail '?'
+            []
+    ,   ParseTest "parse_emit_if_term"   "if {?" parse_fail '?'
+            []
+        -}
+
     ]
 
 getInput (ParseTest _ s _ _ _) = s
@@ -694,10 +765,15 @@ parseTestSuiteGen (
     doc "In case of success or rejection, test the continuation char:"
     setLabel succLabel
     setLabel rejeLabel
+
+    cmp contCharR8 (asciiI32 expected_cont_chr)
+    jneNear cchrLabel
+    {-
     assertPtopW8 
         (fromIntegral (ascii expected_cont_chr))
         "Unexpected continuation char (w8)" 
     pdropW8 1
+    -}
 
     testStack xs
     
@@ -707,14 +783,23 @@ parseTestSuiteGen (
     assertPtop 0xCAFE "Stack polution detected"
     pdrop 1
 
+    jmpLabel passLabel
+
+    setLabel cchrLabel
+    writeMsgHelper "Continuation character failure! (r8 register)\n"
+    ret
+
     setLabel failLabel
     doc "In case of failure we don't need to test the continuation char."
 
+    setLabel passLabel
     parseTestSuiteGen rest
   where
     failLabel = lbl ++ "_" ++ inp ++ "_fail"
+    cchrLabel = lbl ++ "_" ++ inp ++ "_cchr"
     succLabel = lbl ++ "_" ++ inp ++ "_success"
     rejeLabel = lbl ++ "_" ++ inp ++ "_reject"
+    passLabel = lbl ++ "_" ++ inp ++ "_pass"
 
 testSuiteParsers = do
     doc "PARSERS TEST SUITE"

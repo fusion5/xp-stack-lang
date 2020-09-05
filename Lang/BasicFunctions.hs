@@ -83,6 +83,16 @@ cpeer numW64s dst =
 ctop :: Val -> X86_64 ()
 ctop = cpeer 0
 
+cpop :: Val -> X86_64 ()
+cpop dst64@(R64 _) = do
+    doc $ "cpop " ++ show dst64
+    mov dst64 $ derefOffset rsp 0
+    add rsp $ I32 8
+cpop dst@(R8 _) = do
+    mov dst $ derefOffset rsp 0
+    add rsp $ I32 1
+
+
 -- Parameter push on the parameter stack (pstack), a different 
 -- stack from the call stack (for which we use simply push).
 -- For the parameter stack position, we reserve the RSI register.

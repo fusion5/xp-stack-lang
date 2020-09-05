@@ -3,7 +3,7 @@ asmgen: ELFHeader64.hs Main.hs \
  ASM/ASM.hs ASM/Datatypes.hs ASM/Pretty.hs \
  Lang/Lang.hs Lang/Debug.hs Lang/Linux.hs \
  Lang/BasicFunctions.hs \
- Lang/Parsing.hs \
+ Lang/Parsing.hs Lang/EmitCode.hs \
  X86/Datatypes.hs X86/X86.hs X86/Tests.hs
 	ghc Main.hs -o $@
 
@@ -47,10 +47,10 @@ parser_testsuite: asmgen assemble
 	./asmgen test_par | ./assemble > $@
 	chmod +x $@
 
-# Run the internal parser tests. This is a better approach then having
-# external programs for parser tests, because the programs rely on the 
-# parsers for loading and thus they can only run once a certain stability is
-# attained, making them a trickier business!
+# Run the internal parser tests. I tried to test the parsers by exposing 
+# internal parse functions and defining test suites in external program files; 
+# however, this relies on the parser working in the first place, which makes
+# bugs harder to diagnose!
 parser_tests: asmgen parser_testsuite
 	@echo RUNNING THE PARSER TEST SUITE
 	@echo -----

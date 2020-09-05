@@ -12,6 +12,7 @@ import Lang.Linux
 import Lang.Debug
 import Lang.BasicFunctions
 import Lang.Parsing
+import Lang.EmitCode
 
 def :: String -> X86_64 ()
 def defName = do
@@ -68,6 +69,9 @@ baseDefEntries = do
     def "push1"
     def "write_char_w8"
     def "write_char_w64"
+
+    def "emit_lit_64"
+    def "term_hash"
     -- def "read_char_w8"
 
 baseDefBodies = do
@@ -89,15 +93,11 @@ baseDefBodies = do
     defineWrCharW8Linux
     defineWrChrW64Linux
 
-    Lang.Parsing.defineRdHeadW8
     -- Lang.Parsing.defineRdTailW8
     -- Lang.Parsing.defineRdTailAZW8
-    Lang.Parsing.defineParseIdentifier
-    Lang.Parsing.defineParseAZ09_
-    Lang.Parsing.defineParseWhitespace
-    Lang.Parsing.defineParseWhitespaceSeq
-    Lang.Parsing.defineParse09
-    Lang.Parsing.defineParseInteger
+    Lang.Parsing.defineParsers
+
+    Lang.EmitCode.defineEmitLit
     -- defineREPL
     defineTermLook
     defineTermHash
@@ -159,6 +159,44 @@ defineNOT = defFunBasic funName body
         ppush $ I32 0
         ret
 
+defineTermHash :: X86_64 ()
+defineTermHash = defFunBasic "term_hash" body
+  where
+    body    = do
+        doc "Backup RBX, RAX, RCX since we'll be using them"
+        cpush rbx
+        cpush rax
+        cpush rcx
+        doc "Given a word on the stack, compute its hash. This helps to"
+        doc "compare words for equality when searching the dictionary."
+        doc "Trying out the (simple) FNV Hash function from Wikipedia"
+        doc "RBX holds the length to iterate."
+        doc "E.g. 'cba' has hash 15626587013303479755"
+        ppop rbx
+        doc "RAX holds the hash."
+        mov rax $ I64 fnvOffsetBasis
+
+        asm $ setLabel "TERM_HASH_WHILE"
+        do 
+            cmp rbx $ I32 0
+            jeNear "TERM_HASH_BREAK"
+            mov rcx (I64 fnvPrime)
+            mul rcx
+            xor rcx rcx -- Zeroing rcx is necessary
+            ppopW8 cl
+            xor rax rcx
+            dec rbx
+            jmpLabel "TERM_HASH_WHILE"
+        asm $ setLabel "TERM_HASH_BREAK"
+
+        ppush rax
+    
+        doc "Restore RBX, RAX, RCX"
+        cpop rcx
+        cpop rax
+        cpop rbx
+        ret
+
 -- Type :w64       -> :
 -- Func :exit_code -> :
 -- Exits the program with a specified exit code.
@@ -179,7 +217,7 @@ defineTermLook = defFunBasic funName body
     body    = do
         doc "Lookup a term in the dictionary."
         doc "Compute the term hash."
-        callLabel "TERM_HASH"
+        callLabel "term_hash"
         doc "Traverse the dictionary using rax until we find"
         doc "either the emtpy dictionary or the term."
         doc ""
@@ -316,38 +354,6 @@ defineShiftRight = defFunBasic fn body where
         sar rax cl
         ppush rax
 
--- Improve: Is TESH_HASH expressible as a sequence of more basic words?
--- ( c0..cn-1:n -- hash )
--- alters: rbx, rcx, rax, rdx
-defineTermHash :: X86_64 ()
-defineTermHash = defFunBasic "TERM_HASH" body
-  where
-    body    = do
-        doc "Given a word on the stack, compute its hash. This helps to"
-        doc "compare words for equality when searching the dictionary."
-        doc "Trying out the (simple) FNV Hash function from Wikipedia"
-        doc "RBX holds the length to iterate."
-        doc "E.g. 'cba' has hash 15626587013303479755"
-        ppop rbx
-        doc "RAX holds the hash."
-        mov rax $ I64 fnvOffsetBasis
-
-        asm $ setLabel "TERM_HASH_WHILE"
-        do 
-            cmp rbx $ I32 0
-            jeNear "TERM_HASH_BREAK"
-            mov rcx (I64 fnvPrime)
-            mul rcx
-            xor rcx rcx -- Zeroing rcx is necessary
-            ppopW8 cl
-            xor rax rcx
-            dec rbx
-            jmpLabel "TERM_HASH_WHILE"
-        asm $ setLabel "TERM_HASH_BREAK"
-
-        ppush rax
-        ret
-
 
 defineREPL :: X86_64 ()
 defineREPL = defFunBasic "repl" body
@@ -361,7 +367,7 @@ defineREPL = defFunBasic "repl" body
         assertPtop 1 "READ_PRINTABLES_W8 returned an error!"
         pdrop 1
         doc "Hash the term we've read:"
-        callLabel "TERM_HASH"
+        callLabel "term_hash"
 
         -- The first word is the operation we wish to make.
         -- There are two operations for now, define and call.
