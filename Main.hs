@@ -128,51 +128,24 @@ mainX86 = do
 
     baseDefEntries
 
-    {-
     let mainTerm = "repl"
     ppushStr mainTerm
     ppushI32 $ length mainTerm
-    callLabel "TERM_LOOK"
+    callLabel "term_look"
     assertPtop 1 "REPL dictionary entry must be in the dictionary!\n"
     doc "Drop the success return code of TERM_LOOK:"
     pdrop 1
     doc "Now take the '.addr' field from the dictionary term found by "
-    doc "TERM_LOOK:"
+    doc "term_look:"
     ppop rax
     mov rax (derefOffset rax 16)
 
-    doc "Call REPL:"
+    doc "Evaluate the repl dictionary entry:"
     call rax
-    -}
 
     -- mov rax $ I64 (2^64 - 1)
     -- ppush rax
     -- callLabel "dbg_dump_ptop_w64"
-
-    let n1 = 10^19
-
-    mov r10 $ I64 n1
-    writeMsgHelper $ show n1 ++ "\n"
-    ppush r10
-    callLabel "dbg_dump_ptop_w64"
-
-    let n2 = 8446744073709551616
-
-    mov rax $ I64 n2
-    writeMsgHelper $ show n2 ++ "\n"
-    ppush rax
-    callLabel "dbg_dump_ptop_w64"
-
-    add r10 rax
-    jcNear "OVERFLOW"
-
-    ppush r10
-    callLabel "dbg_dump_ptop_w64"
-
-    callLabel "exit"
-
-    setLabel "OVERFLOW"
-    writeMsgHelper "Overflow detected!\n"
     callLabel "exit"
 
     baseDefBodies

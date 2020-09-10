@@ -40,7 +40,7 @@ baseDefEntries = do
     doc "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     doc "See also: initDictionaryMemLinux "
 
-    -- def "repl"
+    def "repl"
     def "dbg_dump_dictionary"
     def "dbg_dump_ptop_w8"
     def "dbg_dump_ptop_w64"
@@ -98,7 +98,10 @@ baseDefBodies = do
     Lang.Parsing.defineParsers
 
     Lang.EmitCode.defineEmitLit
-    -- defineREPL
+    Lang.EmitCode.defineEmitIfStart
+    Lang.EmitCode.defineEmitIfEnd
+
+    defineREPL
     defineTermLook
     defineTermHash
     defineTermLookNohash
@@ -213,7 +216,7 @@ defineExit = defFunBasic "exit" body
 defineTermLook :: X86_64 ()
 defineTermLook = defFunBasic funName body
   where
-    funName = "TERM_LOOK"
+    funName = "term_look"
     body    = do
         doc "Lookup a term in the dictionary."
         doc "Compute the term hash."
@@ -223,12 +226,12 @@ defineTermLook = defFunBasic funName body
         doc ""
         doc "rax now holds the hash we're looking for."
 
-        callLabel "TERM_LOOK_NOHASH"
+        callLabel "term_look_nohash"
 
 defineTermLookNohash :: X86_64 ()
 defineTermLookNohash = defFunBasic funName body
   where
-    funName = "TERM_LOOK_NOHASH"
+    funName = "term_look_nohash"
     body    = do
         doc "Lookup a term in the dictionary."
         doc "Use the hash given on the stack."
@@ -362,41 +365,57 @@ defineREPL = defFunBasic "repl" body
         doc "REPL"
         asm $ setLabel "REPL_START"
 
-        doc "Read a term:"
-        callLabel "READ_PRINTABLES_W8"
-        assertPtop 1 "READ_PRINTABLES_W8 returned an error!"
-        pdrop 1
+        doc "Consume any whitespace and prepare the first character"
+        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
+
+        doc "Read a term using parse_identifier:"
+        -- TODO: Rename 'identifier' into 'term' in the parser!
+        callRequiredParser "parse_identifier" "REPL_ERR_UNKNOWN_INPUT"
+
         doc "Hash the term we've read:"
+
         callLabel "term_hash"
 
         -- The first word is the operation we wish to make.
         -- There are two operations for now, define and call.
-        doc "Switch on a different functionality"
+        doc "Switch to a different functionality"
         doc "depending on the hash of the term we've just read:"
 
         ppop rax
         mov rbx (I64 $ fnv1s "def")
         cmp rax rbx
-        jeNear "REPL_DEF_CALL"
+        jeNear "REPL_DEF"
         mov rbx (I64 $ fnv1s "run")
         cmp rax rbx
         jeNear "REPL_RUN"
         mov rbx (I64 $ fnv1s "q")
         cmp rax rbx
         jeNear "REPL_QUIT"
-        
+
+        asm $ setLabel "REPL_ERR_UNKNOWN_INPUT"
         writeMsgHelper "Unknown command! (expected: def/run/q)\n"
         jmpLabel "REPL_START"
 
-        asm $ setLabel "REPL_DEF_CALL"
-        callLabel "REPL_DEF"
+        -------------------------
+        -------------------------
+        asm $ setLabel "REPL_DEF"
+
+        doc "Consume any whitespace"
+        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
+        callRequiredParser "parse_def" "REPL_ERR_FAILED_DEF"
+
         jmpLabel "REPL_START" -- After the definition, resume from the 
-                                    -- beginning.
+                              -- beginning.
+                                    
+
+        -------------------------
+        -------------------------
         asm $ setLabel "REPL_RUN"
-        callLabel "READ_PRINTABLES_W8"
-        assertPtop 1 "Could not read definition term"
-        pdrop 1
-        callLabel "TERM_LOOK"
+        doc "Consume any whitespace"
+        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
+        callRequiredParser "parse_identifier" "REPL_ERR_NOT_A_TERM"
+
+        callLabel "term_look"
         -- Check for an unknown term (do nothing in that case).
         ppop rax
         cmp rax (I32 0)
@@ -409,6 +428,15 @@ defineREPL = defFunBasic "repl" body
 
         writeMsgHelper "Run term done.\n"
         jmpLabel "REPL_START"
+
+        asm $ setLabel "REPL_ERR_NOT_A_TERM"
+        writeMsgHelper "Not a valid term to run!\n"
+        jmpLabel "REPL_START"
+
+        asm $ setLabel "REPL_ERR_FAILED_DEF"
+        writeMsgHelper "Failed to parse definition!\n"
+        jmpLabel "REPL_START"
+
 
         asm $ setLabel "REPL_RUN_UNDEFINED"
         assertPtop 0 "TERM_LOOK failed so the result should be 0."
