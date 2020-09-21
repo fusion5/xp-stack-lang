@@ -294,7 +294,7 @@ parseSequence parserName subParser1 subParser2 init process =
         init 
 
         callLabel subParser1
-        doc "Retrieve the result of parser1 from the stack"
+        doc $ "Retrieve the result of "++subParser1++" from the stack"
         ppop rax
 
         cmp rax $ I32 parse_fail
@@ -305,7 +305,7 @@ parseSequence parserName subParser1 subParser2 init process =
 
         doc "Try the next parser, which must succeed as well."
         callLabel subParser2
-        doc "Retrieve the result of parser2 from the stack"
+        doc $ "Retrieve the result of "++subParser2++" from the stack"
         ppop rax
 
         cmp rax $ I32 parse_fail
@@ -655,7 +655,7 @@ defineParseIntOrIdentifier =
 
         callLabel "term_hash"
         doc "Place the hash in rax"
-        ppop  rax 
+        ppop rax 
 
         doc "Now test our identifier against various options:"
         doc "Does it equal the hash of 'if'?"
@@ -690,14 +690,108 @@ defineParseIntOrIdentifier =
 
 
 defineParseDefBodyEnd = parseSequence "parse_def_body_end"
-    "parse_emit_if_term_wss" "parse_dot_wss" noop noop
+    "parse_emit_if_term_wss" "parse_dot" noop noop
 
 defineParseDefBody = parseSequence "parse_def_body"
     "parse_equal_wss" "parse_def_body_end" noop noop
 
-defineParseDef = parseSequence "parse_def" 
-    "parse_identifier_wss" "parse_def_body" noop noop
+-- This is like a parseSequence but some action is performed after
+-- the first parser succeeds.
+defineParseDef = defFunBasic parserName body
+  where
+    parserName  = "parse_def"
+    failLabel   = parserName ++ "_fail"
+    failLabel2  = parserName ++ "_fail_dealloc"
+    rejectLabel = parserName ++ "_reject"
+    body = do
+        doc $ "Parse a definition; parse the term"
 
+        callLabel "parse_identifier_wss"
+        ppop rax
+        cmp rax $ I32 parse_reject
+        jeNear rejectLabel
+        cmp rax $ I32 parse_fail
+        jeNear failLabel
+
+        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
+        doc "for the new dictionary definition."
+
+        doc "At this point the stack contains the term parsed by "
+        doc "parse_identifier. Hash it and save the hash in rax."
+
+        callBody "term_hash"
+        ppop rax
+
+        doc "Backup the current r11 in rbx"
+        mov rbx r11
+        
+        doc "Advance r11 to make space for the new record"
+        add r11 $ I32 24 
+        doc "save [prev] (the previous dictionary entry) from the backup"
+        mov (derefOffset r11 0)  rbx 
+        doc "save [name hash]"
+        mov (derefOffset r11 8)  rax 
+        doc "save [addr] the address of the definition body (the current r9)"
+        mov (derefOffset r11 16) r9  
+    
+        callLabel "parse_def_body" 
+        ppop rax
+        cmp rax $ I32 parse_fail
+        jeNear failLabel2
+        cmp rax $ I32 parse_reject
+        jeNear failLabel2
+
+        doc "Add a return statement at the end of the definition body"
+        doc "to guarantee reentry after body execution..."
+        callLabel "emit_ret"
+        ppush $ I32 parse_success
+        ret
+
+        setLabel rejectLabel
+        ppush $ I32 parse_reject
+        ret
+
+        setLabel failLabel
+        ppush $ I32 parse_fail
+        ret
+
+        setLabel failLabel2
+        doc "Restore the dictionary state from before the failed def attempt:"
+        sub r11 $ I32 24 -- Dealocate the failed record
+        ppush $ I32 parse_fail
+        ret
+        
+
+{-
+defineParseDef = parseSequence "parse_def" 
+    "parse_identifier_wss" "parse_def_body" init process
+  where
+    init    = do
+
+    process = do
+        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
+        doc "for the new dictionary definition."
+
+        doc "At this point the stack contains the term parsed by "
+        doc "parse_identifier."
+        doc "Hash it and save the hash in rax."
+
+        callBody "term_hash"
+        ppop rax
+
+        doc "Backup the current r11 in rbx"
+        mov rbx r11
+        
+        doc "Advance r11 to make space for the new record"
+        add r11 $ I32 24 
+        doc "save [prev] (the previous dictionary entry) from the backup"
+        mov (derefOffset r11 0)  rbx 
+        doc "save [name hash]"
+        mov (derefOffset r11 8)  rax 
+        doc "save [addr] the address of the definition body (the current r9)"
+        mov (derefOffset r11 16) r9  
+-}
+        
 data ParseTest = ParseTest
     String  -- Parser label (function name)
     String  -- Parser stdin input that is passed to the parser
@@ -846,12 +940,15 @@ parserTests = [
             parse_success '?' []
     ,   ParseTest "parse_def_body_end" "1 .?" 
             parse_success '?' []
+    ,   ParseTest "parse_def_body_end" "1. " 
+            parse_success ' ' [] -- The definition shouldn't consume whitespace
     ,   ParseTest "parse_def_body" "=1.?" 
             parse_success '?' []
     ,   ParseTest "parse_def_body" "= 1.?" 
             parse_success '?' []
-    ,   ParseTest "parse_def" "k = 1.?" 
+    ,   ParseTest "parse_def" "ab = 3.?" 
             parse_success '?' []
+--            [Left 2, Right (ascii 'b'), Right (ascii 'a')]
     ]
 
 getInput (ParseTest _ s _ _ _) = s

@@ -115,3 +115,10 @@ defineEmitLit = defFunBasic funName body
         doc "Restore rax"
         cpop rax
 
+defineEmitRet :: X86_64 ()
+defineEmitRet = defFunBasic funName body
+  where
+    funName = "emit_ret"
+    body = do
+        mov (derefOffset r9 0) (I8 0xC3)
+        inc r9

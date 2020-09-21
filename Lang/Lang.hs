@@ -100,6 +100,7 @@ baseDefBodies = do
     Lang.EmitCode.defineEmitLit
     Lang.EmitCode.defineEmitIfStart
     Lang.EmitCode.defineEmitIfEnd
+    Lang.EmitCode.defineEmitRet
 
     defineREPL
     defineTermLook
@@ -404,13 +405,15 @@ defineREPL = defFunBasic "repl" body
         callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
         callRequiredParser "parse_def" "REPL_ERR_FAILED_DEF"
 
-        jmpLabel "REPL_START" -- After the definition, resume from the 
-                              -- beginning.
-                                    
+        writeMsgHelper "OK, defined.\n"
 
+        doc "After the definition resume from the beginning."
+        jmpLabel "REPL_START" 
+                                    
         -------------------------
         -------------------------
         asm $ setLabel "REPL_RUN"
+
         doc "Consume any whitespace"
         callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
         callRequiredParser "parse_identifier" "REPL_ERR_NOT_A_TERM"
@@ -421,9 +424,11 @@ defineREPL = defFunBasic "repl" body
         cmp rax (I32 0)
         jeNear "REPL_RUN_UNDEFINED"
         
-        -- Now take the '.addr' field from the dictionary term found by LOOK:
+        doc "Take the '.addr' field from the term found by term_look"
         ppop rax
         mov rax (derefOffset rax 16)
+        
+        doc "Evaluate the found entry"
         call rax
 
         writeMsgHelper "Run term done.\n"
