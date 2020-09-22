@@ -659,38 +659,77 @@ defineParseIntOrIdentifier =
 
         doc "Now test our identifier against various options:"
         doc "Does it equal the hash of 'if'?"
-        mov rbx (I64 $ fnv1s "if")
+        mov rbx (I64 $ fnv1s "if_top_nz")
         cmp rax rbx
         jneNear "parse_if_term_not_if"
 
         -- writeMsgHelper "If term\n"
         doc "Parsing an if term!"
 
-        doc "Consume any whitespace after the if-term"
-        callOptionalParser "parse_wss" failLabel
+        do 
+            doc "Consume any whitespace after the if-term"
+            callOptionalParser "parse_wss" failLabel
 
-        -- writeMsgHelper "Cont char:\n"
-        -- ppushContCharW8
+            callBody "emit_if_start"
 
-        callBody "emit_if_start"
+            doc "Parse the if body, which could be anything from a simple"
+            doc "term to a block term to another if term:"
 
-        doc "Parse the if body, which could be anything from a simple"
-        doc "term to a block term to another if term:"
+            callRequiredParser "parse_emit_if_term" failLabel
 
-        callRequiredParser "parse_emit_if_term" failLabel
+            doc "(Note: it is critical that the program returns here"
+            doc "to the same stack point as at the emit_if_start call "
+            doc "because emit_if_end uses the value placed on the stack "
+            doc "by emit_if_start)!"
 
-        doc "(Note: it is critical that the program returns here"
-        doc "to the same stack point as at the emit_if_start call "
-        doc "because emit_if_end uses the value placed on the stack "
-        doc "by emit_if_start)!"
-
-        callBody "emit_if_end"
+            callBody "emit_if_end"
+            jmpLabel "parse_if_term_done"
 
         setLabel "parse_if_term_not_if"
 
+        doc "Try out whether it is a return statement? (ret)"
+        mov rbx (I64 $ fnv1s "ret")
+        cmp rax rbx
+        jneNear "parse_if_term_not_ret"
+
+        doc "Parsing a 'ret' keyword!"
+        do
+            -- doc "Consume any whitespace after the ret-term"
+            -- callOptionalParser "parse_wss" failLabel
+            callBody "emit_ret"
+            jmpLabel "parse_if_term_done"
+
+        setLabel "parse_if_term_not_ret"
+
+        doc "Is it an identifier found in the "
+        doc "environment?"
+        do
+            -- doc "Consume any whitespace after the term"
+            -- callOptionalParser "parse_wss" failLabel
+
+            ppush rax
+            callLabel "term_look"
+            ppop rax
+            cmp rax (I32 0)
+            jeNear "parse_if_term_undefined"
+
+            doc "Found the term in the dictionary! Emit a call to the address."
+            callLabel "emit_call"
+
+            jmpLabel "parse_if_term_done"
+
+        setLabel "parse_if_term_undefined"
+        do
+            writeMsgHelper "Undefined term skipped! Parse failure!\n"
+            doc "Note we could also have the parser ignore the failure..."
+            jeNear failLabel
+
+
+        setLabel "parse_if_term_done"
+
 
 defineParseDefBodyEnd = parseSequence "parse_def_body_end"
-    "parse_emit_if_term_wss" "parse_dot" noop noop
+    "parse_emit_if_terms" "parse_dot" noop noop
 
 defineParseDefBody = parseSequence "parse_def_body"
     "parse_equal_wss" "parse_def_body_end" noop noop
@@ -874,6 +913,16 @@ parserTests = [
             [Left $ fromIntegral $ 2^64 - 1]
     ,   ParseTest "parse_integer"    (show (2^64) ++ "?") parse_fail '?'
             []
+    ,   ParseTest "parse_emit_int_or_identifier" "push1 " parse_success ' '
+            []
+    ,   ParseTest "parse_emit_int_or_identifier" "ident " parse_success ' '
+            []
+    ,   ParseTest "parse_emit_int_or_identifier" "ret " parse_success ' '
+            []
+    -- ,   ParseTest "parse_emit_int_or_identifier" "if 0 " parse_success ' '
+    --        []
+    ,   ParseTest "parse_emit_int_or_identifier" "123 " parse_success ' '
+            []
     ,   ParseTest "parse_rbrace" "}?" parse_success '?' 
             []
     ,   ParseTest "parse_rbrace" "?" parse_reject '?'
@@ -896,13 +945,13 @@ parserTests = [
             []
     ,   ParseTest "parse_emit_if_term" "a?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "x1?" parse_success '?'
+    ,   ParseTest "parse_emit_if_term" "push1?" parse_success '?'
             []
     ,   ParseTest "parse_emit_if_term" "0?" parse_success '?'
             []
     ,   ParseTest "parse_emit_if_term" "1337?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "{x1}?" parse_success '?'
+    ,   ParseTest "parse_emit_if_term" "{push1}?" parse_success '?'
             []
     ,   ParseTest "parse_emit_if_term" "{0 1 2}?" parse_success '?'
             []
@@ -916,25 +965,29 @@ parserTests = [
             []
     ,   ParseTest "parse_emit_if_terms" "?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "bbc?" parse_success '?'
+    ,   ParseTest "parse_emit_if_terms" "push1?" parse_success '?'
+            []
+    ,   ParseTest "parse_emit_if_terms" "push1 ?" parse_success '?'
             []
     ,   ParseTest "parse_emit_if_terms" "64?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "x1 64 x2?" parse_success '?'
+    ,   ParseTest "parse_emit_if_terms" "push1 64 push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if x1?" parse_success '?'
+    ,   ParseTest "parse_emit_if_term" "if_top_nz push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if {d1 123 d2 d3}?" parse_success '?'
+    ,   ParseTest "parse_emit_if_term" "if_top_nz if_top_nz push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if{d1 123 d2 d3}?" parse_success '?'
+    ,   ParseTest "parse_emit_if_term" "if_top_nz {d1 123 d2 d3}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if {?" parse_fail '?'
+    ,   ParseTest "parse_emit_if_term" "if_top_nz{d1 123 d2 d3}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if ?" parse_fail '?'
+    ,   ParseTest "parse_emit_if_term" "if_top_nz {?" parse_fail '?'
             []
-    ,   ParseTest "parse_emit_if_term" "{x1 {x2}}?" 
+    ,   ParseTest "parse_emit_if_term" "if_top_nz ?" parse_fail '?'
+            []
+    ,   ParseTest "parse_emit_if_term" "{push1 {push1}}?" 
             parse_success '?' []
-    ,   ParseTest "parse_emit_if_term" "if {x1 if {x2}}?" 
+    ,   ParseTest "parse_emit_if_term" "if_top_nz {push1 if_top_nz {push1}}?" 
             parse_success '?' []
     ,   ParseTest "parse_def_body_end" "1.?" 
             parse_success '?' []
@@ -949,6 +1002,10 @@ parserTests = [
     ,   ParseTest "parse_def" "ab = 3.?" 
             parse_success '?' []
 --            [Left 2, Right (ascii 'b'), Right (ascii 'a')]
+    ,   ParseTest "parse_def" "push2 = push1 push1 plus .?" 
+            parse_success '?' []
+    ,   ParseTest "parse_def" "push2 = push1 push1 plus . " 
+            parse_success ' ' []
     ]
 
 getInput (ParseTest _ s _ _ _) = s

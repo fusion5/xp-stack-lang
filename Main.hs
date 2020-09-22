@@ -131,12 +131,12 @@ mainX86 = do
     let mainTerm = "repl"
     ppushStr mainTerm
     ppushI32 $ length mainTerm
-    callLabel "term_look"
-    assertPtop 1 "REPL dictionary entry must be in the dictionary!\n"
+    callLabel "term_hash_look"
+    assertPtop 1 "The 'repl' dictionary entry not found!\n"
     doc "Drop the success return code of TERM_LOOK:"
     pdrop 1
     doc "Now take the '.addr' field from the dictionary term found by "
-    doc "term_look:"
+    doc "term_hash_look:"
     ppop rax
     mov rax (derefOffset rax 16)
 

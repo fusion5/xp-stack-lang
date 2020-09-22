@@ -122,3 +122,27 @@ defineEmitRet = defFunBasic funName body
     body = do
         mov (derefOffset r9 0) (I8 0xC3)
         inc r9
+
+defineEmitCall :: X86_64 () 
+defineEmitCall = defFunBasic "emit_call" body
+  where
+    body = do
+        doc "Emit a call to a certain dictionary entry, the address of which"
+        doc "is on the stack."
+
+        ppop rax
+        mov rax (derefOffset rax 16)
+
+        -- mov rax <addr>
+        do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0xB8)
+            mov (derefOffset r9 2) rax
+            add r9 (I32 10)
+
+        -- call rax
+        do
+            mov (derefOffset r9 0) (I8 0xFF)
+            mov (derefOffset r9 1) (I8 0xD0)
+            add r9 (I32 2)
+ 

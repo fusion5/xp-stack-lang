@@ -51,8 +51,8 @@ baseDefEntries = do
     -- def "parse_if_term"
     def "not"
     def "dec"
-    -- def "pdrop_w64"
-    -- def "pdrop_w8"
+    def "drop_w64" -- Not very memory safe but for experiments...
+    def "drop_w8"
     -- def "ppeer_w8"
     -- def "ppeer_w64"
     def "dup"
@@ -101,6 +101,7 @@ baseDefBodies = do
     Lang.EmitCode.defineEmitIfStart
     Lang.EmitCode.defineEmitIfEnd
     Lang.EmitCode.defineEmitRet
+    Lang.EmitCode.defineEmitCall
 
     defineREPL
     defineTermLook
@@ -109,6 +110,9 @@ baseDefBodies = do
 
     definePush1
     definePushK
+
+    defineDropW64
+    defineDropW8
 
     defineDUP
     defineNOT
@@ -123,6 +127,12 @@ baseDefBodies = do
 definePush1 = defFunBasic "push1" body where
     body = do
         ppush $ I32 1
+
+defineDropW64 = defFunBasic "drop_w64" body where
+    body = pdrop 1
+
+defineDropW8 = defFunBasic "drop_w8" body where
+    body = pdropW8 1
 
 definePushK = defFunBasic "pushk" body where
     body = do
@@ -217,7 +227,7 @@ defineExit = defFunBasic "exit" body
 defineTermLook :: X86_64 ()
 defineTermLook = defFunBasic funName body
   where
-    funName = "term_look"
+    funName = "term_hash_look"
     body    = do
         doc "Lookup a term in the dictionary."
         doc "Compute the term hash."
@@ -227,14 +237,14 @@ defineTermLook = defFunBasic funName body
         doc ""
         doc "rax now holds the hash we're looking for."
 
-        callLabel "term_look_nohash"
+        callLabel "term_look"
 
 defineTermLookNohash :: X86_64 ()
 defineTermLookNohash = defFunBasic funName body
   where
-    funName = "term_look_nohash"
+    funName = "term_look"
     body    = do
-        doc "Lookup a term in the dictionary."
+        doc "Lookup a term hash in the dictionary."
         doc "Use the hash given on the stack."
         doc "Traverse the dictionary using rax until we find"
         doc "either the emtpy dictionary or the term."
@@ -264,7 +274,7 @@ defineTermLookNohash = defFunBasic funName body
         asm $ setLabel "TERM_LOOK_NOT_FOUND"
         doc "Not found! indicate that there is an error."
         ppush $ I32 0
-        ppush $ I32 0
+        -- ppush $ I32 0
         ret
 
 defineWrCharW8Linux :: X86_64 ()
@@ -418,13 +428,13 @@ defineREPL = defFunBasic "repl" body
         callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
         callRequiredParser "parse_identifier" "REPL_ERR_NOT_A_TERM"
 
-        callLabel "term_look"
+        callLabel "term_hash_look"
         -- Check for an unknown term (do nothing in that case).
         ppop rax
         cmp rax (I32 0)
         jeNear "REPL_RUN_UNDEFINED"
         
-        doc "Take the '.addr' field from the term found by term_look"
+        doc "Take the '.addr' field from the term found by term_hash_look"
         ppop rax
         mov rax (derefOffset rax 16)
         
@@ -440,6 +450,11 @@ defineREPL = defFunBasic "repl" body
 
         asm $ setLabel "REPL_ERR_FAILED_DEF"
         writeMsgHelper "Failed to parse definition!\n"
+        ppushContCharW8
+        writeMsgHelper "Unable to handle char: '"
+        callLabel "dbg_dump_ptop_w8"
+        writeMsgHelper "'\n"
+        ppopW8 al
         jmpLabel "REPL_START"
 
 
