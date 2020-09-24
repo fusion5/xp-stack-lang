@@ -1,0 +1,77 @@
+Version 2:
+----------
+Combinator <> means sequence without whitespace between
+Combinator <+> means sequence with optional whitespace between
+Combinator | means alternative
+
+<az09_>   = { a..z, 0..9, _ }
+<az09_s>  = <az09_>*
+<az09>    = { a..z, 0..9 }
+<az_>     = { a..z, _ }
+<az>      = { a..z }
+<09>      = { 0..9 }
+<09s>     = <09>*
+<dot>     = '.'
+<equal>   = '='
+<lbrace>  = '{'
+<rbrace>  = '}'
+<lparen>  = '('
+<rparen>  = ')'
+<noparen> = { Anything other than '(' or ')' }
+<norparens> = <norparen>*
+
+<comment>        = <lparen> <> <comment_body>
+<comment_body>   = <noparens> <> <rparen>
+
+<ws>         = { Ascii characters that are space (0x20) or less }
+<wss>        = <ws>*
+<identifier> = <az_> <> <az09_s>
+<integer>    = 09 <> 09s
+
+<block>             = <lbrace> <+> <block_end>
+<block_end>         = <if_term_wsss> <> <rbrace>
+
+<if_term>           = <comment_or_block> | <int_or_identifier>
+<int_or_identifier> = <integer> | <identifier>
+<comment_or_block>  = <block> | <comment>
+
+<if_term_wss>       = <if_term> <> <wss>
+<if_term_wsss>      = <if_term_wss>*
+
+<def_body>          = equal <+> def_body_end
+<def_body_end>      = <if_term_wsss> <> <dot>
+<def>               = <identifier> <+> <def_body>
+
+
+
+Version 1:
+----------
+<az09_>   = { a..z, 0..9, _ }
+<az09_s>  = <az09_>*
+<az09>    = { a..z, 0..9 }
+<az_>     = { a..z, _ }
+<az>      = { a..z }
+<09>      = { 0..9 }
+<09s>     = <09>*
+<dot>     = '.'
+<equal>   = '='
+<lbrace>  = '{'
+<rbrace>  = '}'
+<ws>      = SPACE OR LESS
+<wss>     = <ws>*
+<dot_wss> = <dot> <wss>
+<equal_wss> = <equal> <wss>
+<lbrace_wss> = <lbrace> <wss>
+<rbrace_wss> = <rbrace> <wss>
+<block> = <lbrace_wss> <block_end>
+<block_end> = <if_terms> <rbrace>
+<identifier> = <az_> <az09_s>
+<identifier_wss> = <identifier> <wss>
+<integer> = <09> <09s>
+<if_term> = <block> | <int_or_identifier>
+<if_term_wss> = <if_term> <wss>
+<if_terms> = <if_term_wss>*
+<int_or_identifier> = <integer> | <identifier>
+<def_body> = <equal_wss> <def_body_end>
+<def_body_end> = <if_terms> <dot>
+<def> = <identifier_wss> <def_body>

@@ -1,0 +1,30 @@
+def decrement = dec. 
+def duplicate = dup.
+
+def factorial = 
+    ( 
+        Compute the factorial of the top value received on the stack.
+        First, test whether or not the top value is 1 by duplicating
+        it and subtracting it.
+    )
+    duplicate 
+    decrement
+    if_top_nz {             ( if the top value is != 0 )
+        drop_w64            ( drop the tested result )
+        duplicate decrement ( duplicate the top value and decrement it )
+        factorial           ( call factorial recursively )
+        times               ( multiply the factorial result and the 
+                              received parameter )
+        ret                 ( return )
+    }
+    drop_w64                ( the top parameter is 1, do nothing. )
+.
+
+def main = 
+    10
+    factorial
+    dbg_dump_ptop_w64
+.
+
+run main
+q
