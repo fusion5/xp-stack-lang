@@ -33,9 +33,9 @@ def defName = do
     mov (derefOffset r11 16) rax  -- code address (by label ref.)
 
 baseDefEntries = do
-    doc "Populate the dictionary with base functions."
+    doc "Populate the dictionary with some base functions."
     doc "Keep it a linked list rather than an array because there "
-    doc "might be variable-length records in the future (e.g. keep the "
+    doc "might be variable-length records in the future (e.g. the "
     doc "entry name ASCII representation)"
     doc "Simple Dictionary of cells [ prev ][ name ][ addr ]"
     doc "See also: initDictionaryMemLinux "
@@ -46,7 +46,7 @@ baseDefEntries = do
     def "dbg_dump_ptop_w64"
 
     def "read_head_w8"
-    def "parse_identifier"
+    -- def "parse_identifier"
     -- def "parse_numeric"
     -- def "parse_if_term"
     def "not"
@@ -70,7 +70,7 @@ baseDefEntries = do
     def "write_char_w8"
     def "write_char_w64"
 
-    def "emit_lit_64"
+    -- def "emit_lit_64"
     def "term_hash"
     -- def "read_char_w8"
 
@@ -93,8 +93,6 @@ baseDefBodies = do
     defineWrCharW8Linux
     defineWrChrW64Linux
 
-    -- Lang.Parsing.defineRdTailW8
-    -- Lang.Parsing.defineRdTailAZW8
     Lang.Parsing.defineParsers
 
     Lang.EmitCode.defineEmitLit
@@ -196,9 +194,9 @@ defineTermHash = defFunBasic "term_hash" body
             jeNear "TERM_HASH_BREAK"
             mov rcx (I64 fnvPrime)
             mul rcx
-            xor rcx rcx -- Zeroing rcx is necessary
+            X86.X86.xor rcx rcx -- Zeroing rcx is necessary
             ppopW8 cl
-            xor rax rcx
+            X86.X86.xor rax rcx
             dec rbx
             jmpLabel "TERM_HASH_WHILE"
         asm $ setLabel "TERM_HASH_BREAK"
@@ -375,6 +373,10 @@ defineREPL = defFunBasic "repl" body
     body = do
         doc "REPL"
         asm $ setLabel "REPL_START"
+
+        doc "Await some input to be available"
+        callLabel "read_head_w8"
+        pdrop 1
 
         doc "Consume any whitespace and prepare the first character"
         callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"

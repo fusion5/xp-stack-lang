@@ -10,6 +10,7 @@ Combinator | means alternative
 <az_>     = { a..z, _ }
 <az>      = { a..z }
 <09>      = { 0..9 }
+<af09>    = { A..F, 0..9 }
 <09s>     = <09>*
 <dot>     = '.'
 <equal>   = '='
@@ -17,16 +18,22 @@ Combinator | means alternative
 <rbrace>  = '}'
 <lparen>  = '('
 <rparen>  = ')'
-<noparen> = { Anything other than '(' or ')' }
+<0>       = '0'
+<x>       = 'x'
+<noparen>   = { Anything other than '(' or ')' }
 <norparens> = <norparen>*
 
-<comment>        = <lparen> <> <comment_body>
-<comment_body>   = <noparens> <> <rparen>
+<comment>      = <lparen> <> <comment_body>
+<comment_body> = <noparens> <> <rparen>
 
 <ws>         = { Ascii characters that are space (0x20) or less }
 <wss>        = <ws>*
 <identifier> = <az_> <> <az09_s>
 <integer>    = 09 <> 09s
+
+<hex_prefix> = <zero> <> <x>
+<hex_body>   = <af09> <> <af09>
+<hex_w8>     = <hex_prefix> <> <hex_body>
 
 <block>             = <lbrace> <+> <block_end>
 <block_end>         = <if_term_wsss> <> <rbrace>

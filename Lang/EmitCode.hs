@@ -82,7 +82,7 @@ defineEmitLit = defFunBasic funName body
         doc "Backup rax"
         cpush rax
         xor rax rax
-        doc "Take the literal that we need to push and place it in rax"
+        doc "Take the 64 bit literal that we need to push and place it in rax"
         ppop rax
         -- TODO: Improve code (repeated code)
         doc "X86: sub RSI 8"
@@ -112,8 +112,25 @@ defineEmitLit = defFunBasic funName body
             mov (derefOffset r9 7) al
             add r9 (I32 8)
 
+        doc "FIXME: Only 32bits are moved, but we need all 64!!!"
+
         doc "Restore rax"
         cpop rax
+
+defineEmit :: X86_64 ()
+defineEmit = defFunBasic "emit_w8" body 
+  where
+    body = do
+        doc "Takes the w8 value from the top of the stack and emits it"
+        doc "in the JIT code generation area. Uses RAX"
+        -- cpush rax
+        -- xor rax rax
+        ppop al
+        mov (derefOffset r9 0) al
+        inc r9
+        -- cpop rax
+        
+        
 
 defineEmitRet :: X86_64 ()
 defineEmitRet = defFunBasic funName body
@@ -130,6 +147,7 @@ defineEmitCall = defFunBasic "emit_call" body
         doc "Emit a call to a certain dictionary entry, the address of which"
         doc "is on the stack."
 
+        cpush rax
         ppop rax
         mov rax (derefOffset rax 16)
 
@@ -145,4 +163,4 @@ defineEmitCall = defFunBasic "emit_call" body
             mov (derefOffset r9 0) (I8 0xFF)
             mov (derefOffset r9 1) (I8 0xD0)
             add r9 (I32 2)
- 
+        cpop rax 

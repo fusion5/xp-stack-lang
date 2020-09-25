@@ -38,12 +38,13 @@ ppushContCharW8 = do
 defineParsers = do
     defineRdHeadW8
     defineParseIdentifier
-    defineParseIdentifierWS
     defineParseAZ09_s
     defineParseAZ09_
     defineParseAZ_
     defineParseWhitespace
     defineParseWhitespaceSeq
+    defineParseZero
+    defineParseX
     defineParse09
     defineParse09s
     defineParseInteger
@@ -52,17 +53,27 @@ defineParsers = do
     defineParseIfTerms
     defineParseRBrace
     defineParseLBrace
-    defineParseLBraceWS
+    defineParseRParen
+    defineParseLParen
     defineParseBlockEnd
     defineParseBlock
     defineParseIntOrIdentifier 
     defineParseEqual
-    defineParseEqualWS
     defineParseDot
-    defineParseDotWS
     defineParseDef
     defineParseDefBody
     defineParseDefBodyEnd
+    defineParseNoRParen
+    defineParseNoRParens
+    defineParseComment
+    defineParseCommentBody
+    defineParseCommentOrBlock 
+    defineParse09Hex
+    defineParseAFHex
+    defineParseHexPrefix 
+    defineParseAF09Hex
+    defineParseHexBody 
+    defineParseHexW8
 
 -- Parses input. Skips whitespace, control characters, etc. 
 -- Stops at the first non-such char and pushes it on the stack.
@@ -280,9 +291,10 @@ parseStar parserName subParserName init dataProcess =
     loopLabel  = parserName ++ "_loop"
     failLabel  = parserName ++ "_fail"
 
--- Parser "composer" A B
-parseSequence parserName subParser1 subParser2 init process = 
-    defFunBasic parserName body
+-- Parser "composer" A B or A <wss> B
+parseSequence withSpaceBetween parserName 
+    init subParser1 midprocess subParser2 process = 
+        defFunBasic parserName body
   where
     failLabel   = parserName ++ "_fail"
     rejectLabel = parserName ++ "_reject"
@@ -302,6 +314,13 @@ parseSequence parserName subParser1 subParser2 init process =
 
         cmp rax $ I32 parse_reject
         jeNear rejectLabel
+
+        if withSpaceBetween then
+            callOptionalParser "parse_wss" failLabel
+        else
+            return ()
+    
+        midprocess
 
         doc "Try the next parser, which must succeed as well."
         callLabel subParser2
@@ -401,6 +420,14 @@ inputTest_az_ reg rejectLabel = do
 
     setLabel okLabel
 
+inputTest_AF reg rejectLabel = do
+    doc "Is the char in the register in {A..F}"
+    cmp reg $ asciiI32 'A'
+    jlNear rejectLabel
+    cmp reg $ asciiI32 'F'
+    jgNear rejectLabel
+    doc "The input is within A-F, do not reject"
+
 inputTest_az09_ reg rejectLabel = do
     doc "Is the char in the register in {a..z, 0..9, _}?"
     doc "If not, then reject"
@@ -451,56 +478,41 @@ inputTestWS reg rejectLabel = do
 
     setLabel okLabel
 
-inputTestRBrace reg rejectLabel = do
-    doc "Is the char }?"
-    cmp reg $ asciiI32 '}'
+inputTestNotChar chr reg rejectLabel = do
+    doc $ "Is the char not " ++ show chr ++ "?"
+    cmp reg $ asciiI32 chr
+    jeNear rejectLabel
+
+inputTestChar chr reg rejectLabel = do
+    doc $ "Is the char " ++ show chr ++ "?"
+    cmp reg $ asciiI32 chr
     jneNear rejectLabel
 
-inputTestLBrace reg rejectLabel = do
-    doc "Is the char {?"
-    cmp reg $ asciiI32 '{'
-    jneNear rejectLabel
-
-inputTestEqual reg rejectLabel = do
-    doc "Is the char =?"
-    cmp reg $ asciiI32 '='
-    jneNear rejectLabel
-
-inputTestDot reg rejeLabel = do
-    cmp reg $ asciiI32 '.'
-    jneNear rejeLabel
-
-defineParseDot = do
-    parseTerminal "parse_dot" inputTestDot noop
-
-defineParseDotWS = do
-    parseSequence "parse_dot_wss"
-        "parse_dot" "parse_wss" noop noop
-
-defineParseEqual = do
-    parseTerminal "parse_equal" inputTestEqual noop
-
-defineParseEqualWS = do
-    parseSequence "parse_equal_wss"
-        "parse_equal" "parse_wss" noop noop
-
-defineParseRBrace = do
-    parseTerminal "parse_rbrace" inputTestRBrace noop
-
-defineParseLBrace = do
-    parseTerminal "parse_lbrace" inputTestLBrace noop
-
-defineParseLBraceWS = do
-    parseSequence "parse_lbrace_ws"
-        "parse_lbrace" "parse_wss" noop noop
+defineParseDot    = parseTerminal "parse_dot"    (inputTestChar '.') noop
+defineParseEqual  = parseTerminal "parse_equal"  (inputTestChar '=') noop
+defineParseLBrace = parseTerminal "parse_lbrace" (inputTestChar '{') noop
+defineParseRBrace = parseTerminal "parse_rbrace" (inputTestChar '}') noop
+defineParseLParen = parseTerminal "parse_lparen" (inputTestChar '(') noop
+defineParseRParen = parseTerminal "parse_rparen" (inputTestChar ')') noop
+defineParseNoRParen = parseTerminal "parse_norparen" (inputTestNotChar ')') noop
+defineParseX = parseTerminal "parse_x" (inputTestChar 'x') noop
+defineParseZero = parseTerminal "parse_zero" (inputTestChar '0') noop
 
 defineParseBlockEnd = do
-    parseSequence "parse_block_end" 
-        "parse_emit_if_terms" "parse_rbrace" noop noop
+    parseSequence False "parse_block_end" 
+        noop "parse_if_term_wsss" noop "parse_rbrace" noop
 
 defineParseBlock = do
-    parseSequence "parse_block"
-        "parse_lbrace_ws" "parse_block_end" noop noop
+    parseSequence True "parse_block"
+        noop "parse_lbrace" noop "parse_block_end" noop
+
+defineParseCommentOrBlock =
+    parseAlt "parse_comment_or_block"
+        "parse_block"   processBlock
+        "parse_comment" processComment
+  where
+    processBlock _ = noop
+    processComment _ = noop
     
 defineParse09 :: X86_64 () 
 defineParse09 = do
@@ -518,7 +530,7 @@ defineParse09s = parseStar "parse_09s" "parse_09" noop noop
 
 defineParseAZ09_ :: X86_64 ()
 defineParseAZ09_ = do
-    doc "Parse a single char from {a-z, 0-9, _} anc inc. r15 (the char counter)"
+    doc "Parse a single char from {a-z, 0-9, _} and inc. r15 (the char counter)"
     parseTerminal "parse_az09_" test process
   where
     test = inputTest_az09_
@@ -551,7 +563,8 @@ defineParseAZ09_s = parseStar "parse_az09_s" "parse_az09_" noop noop
 
 defineParseIdentifier = do
     doc "identifier = [a-z_][a-z0-9_]*"
-    parseSequence "parse_identifier" "parse_az_" "parse_az09_s" init process
+    parseSequence False "parse_identifier" 
+        init "parse_az_" noop "parse_az09_s" process
   where
     init = do
         doc "Use r15 as a character counter. Initialize to 0."
@@ -560,12 +573,10 @@ defineParseIdentifier = do
     process = do
         ppush r15
 
-defineParseIdentifierWS = 
-    parseSequence "parse_identifier_wss" "parse_identifier" "parse_wss" noop noop
-   
 defineParseInteger = do
     doc "[0-9][0-9]*"
-    parseSequence "parse_integer" "parse_09" "parse_09s" init process
+    parseSequence False "parse_integer" 
+        init "parse_09" noop "parse_09s" process
   where
     init = do
         doc "Use r15 as a character counter, initialize it with 0."
@@ -625,24 +636,83 @@ defineParseInteger = do
         doc "Push the multiplication result"
         ppush r10
    
+defineParse09Hex :: X86_64 ()
+defineParse09Hex = do
+    parseTerminal "parse_09_hex" inputTest_decimal process
+  where
+    process = do
+        doc "Place the continuation char to the stack as a w8"
+        ppushContCharW8
+        doc "Convert it to decimal 0-9"
+        xor rax rax
+        ppop al
+        sub rax (I32 0x30)
+        ppush al
+
+defineParseAFHex :: X86_64 ()
+defineParseAFHex = do
+    parseTerminal "parse_af_hex" inputTest_AF process
+  where
+    process = do
+        doc "Place the continuation char to the stack as a w8"
+        ppushContCharW8
+        doc "Convert it to decimal 10-15"
+        xor rax rax
+        ppop al
+        sub rax (I32 55)
+        ppush al
+
+defineParseAF09Hex :: X86_64 ()
+defineParseAF09Hex = do
+    parseAlt "parse_af09_hex"
+        "parse_09_hex" no_process
+        "parse_af_hex" no_process
+  where
+    no_process _ = noop
+
+defineParseHexBody :: X86_64 ()
+defineParseHexBody = do
+    parseSequence False "parse_hex_body" 
+        init "parse_af09_hex" noop "parse_af09_hex" process
+  where
+    init    = noop
+    process = do
+        ppop bl
+        ppop al
+        doc "Shift 4 bits to the left"
+        sal rax (I8 4)
+        add rax rbx
+        ppush al
+        
+
+defineParseHexPrefix :: X86_64 ()
+defineParseHexPrefix = do
+    parseSequence False "parse_hex_prefix"
+        noop "parse_zero" noop "parse_x" noop
+
+defineParseHexW8 :: X86_64 ()
+defineParseHexW8 = do
+    parseSequence False "parse_hex_w8"
+        noop "parse_hex_prefix" noop "parse_hex_body" noop
+
 defineParseIfTermWS = 
-    parseSequence "parse_emit_if_term_wss" 
-        "parse_emit_if_term" "parse_wss" noop noop
+    parseSequence False "parse_if_term_wss" 
+        noop "parse_if_term" noop "parse_wss" noop
 
 defineParseIfTerms = 
-    parseStar "parse_emit_if_terms" 
-        "parse_emit_if_term_wss" noop noop
+    parseStar "parse_if_term_wsss" 
+        "parse_if_term_wss" noop noop
 
 defineParseIfTerm = 
-    parseAlt "parse_emit_if_term"
-        "parse_block" processBlock
-        "parse_emit_int_or_identifier" processIntOrIdentifier
+    parseAlt "parse_if_term"
+        "parse_comment_or_block" processBlock
+        "parse_int_or_identifier" processIntOrIdentifier
   where
     processBlock _           = noop
     processIntOrIdentifier _ = noop
         
 defineParseIntOrIdentifier = 
-    parseAlt "parse_emit_int_or_identifier" 
+    parseAlt "parse_int_or_identifier" 
         "parse_integer"    processInteger
         "parse_identifier" processIdentifier
   where
@@ -675,7 +745,7 @@ defineParseIntOrIdentifier =
             doc "Parse the if body, which could be anything from a simple"
             doc "term to a block term to another if term:"
 
-            callRequiredParser "parse_emit_if_term" failLabel
+            callRequiredParser "parse_if_term" failLabel
 
             doc "(Note: it is critical that the program returns here"
             doc "to the same stack point as at the emit_if_start call "
@@ -720,7 +790,7 @@ defineParseIntOrIdentifier =
 
         setLabel "parse_if_term_undefined"
         do
-            writeMsgHelper "Undefined term skipped! Parse failure!\n"
+            writeMsgHelper "Undefined term skipped!\n"
             doc "Note we could also have the parser ignore the failure..."
             jeNear failLabel
 
@@ -728,11 +798,11 @@ defineParseIntOrIdentifier =
         setLabel "parse_if_term_done"
 
 
-defineParseDefBodyEnd = parseSequence "parse_def_body_end"
-    "parse_emit_if_terms" "parse_dot" noop noop
+defineParseDefBodyEnd = parseSequence False "parse_def_body_end"
+    noop "parse_if_term_wsss" noop "parse_dot" noop
 
-defineParseDefBody = parseSequence "parse_def_body"
-    "parse_equal_wss" "parse_def_body_end" noop noop
+defineParseDefBody = parseSequence True "parse_def_body"
+    noop "parse_equal" noop "parse_def_body_end" noop
 
 -- This is like a parseSequence but some action is performed after
 -- the first parser succeeds.
@@ -745,7 +815,7 @@ defineParseDef = defFunBasic parserName body
     body = do
         doc $ "Parse a definition; parse the term"
 
-        callLabel "parse_identifier_wss"
+        callLabel "parse_identifier"
         ppop rax
         cmp rax $ I32 parse_reject
         jeNear rejectLabel
@@ -773,6 +843,9 @@ defineParseDef = defFunBasic parserName body
         doc "save [addr] the address of the definition body (the current r9)"
         mov (derefOffset r11 16) r9  
     
+        callLabel "parse_wss" 
+        pdrop 1
+
         callLabel "parse_def_body" 
         ppop rax
         cmp rax $ I32 parse_fail
@@ -800,37 +873,17 @@ defineParseDef = defFunBasic parserName body
         ppush $ I32 parse_fail
         ret
         
+defineParseComment = 
+    parseSequence False "parse_comment"
+        noop "parse_lparen" noop "parse_comment_body" noop 
 
-{-
-defineParseDef = parseSequence "parse_def" 
-    "parse_identifier_wss" "parse_def_body" init process
-  where
-    init    = do
+defineParseCommentBody =
+    parseSequence False "parse_comment_body"
+        noop "parse_norparens" noop "parse_rparen" noop 
 
-    process = do
-        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
-        doc "for the new dictionary definition."
+defineParseNoRParens = 
+    parseStar "parse_norparens" "parse_norparen" noop noop 
 
-        doc "At this point the stack contains the term parsed by "
-        doc "parse_identifier."
-        doc "Hash it and save the hash in rax."
-
-        callBody "term_hash"
-        ppop rax
-
-        doc "Backup the current r11 in rbx"
-        mov rbx r11
-        
-        doc "Advance r11 to make space for the new record"
-        add r11 $ I32 24 
-        doc "save [prev] (the previous dictionary entry) from the backup"
-        mov (derefOffset r11 0)  rbx 
-        doc "save [name hash]"
-        mov (derefOffset r11 8)  rax 
-        doc "save [addr] the address of the definition body (the current r9)"
-        mov (derefOffset r11 16) r9  
--}
-        
 data ParseTest = ParseTest
     String  -- Parser label (function name)
     String  -- Parser stdin input that is passed to the parser
@@ -841,6 +894,7 @@ data ParseTest = ParseTest
                           -- behind.
         
 resultAscii = Right . ascii
+resultW8    = Right 
 
 -- TODO: Do a check that the test coverage is 100%
 -- TODO: Make the tests check the emitted code as well
@@ -864,9 +918,9 @@ parserTests = [
     ,   ParseTest "parse_wss" "   ?" parse_success '?'
             []
     ,   ParseTest "parse_az09_"      "a?"    parse_success '?'
-            [Right (ascii 'a')]
+            [resultAscii 'a']
     ,   ParseTest "parse_az09_"      "z?"    parse_success '?'
-            [Right (ascii 'z')]
+            [resultAscii 'z']
     ,   ParseTest "parse_az09_"      "`"     parse_reject  '`'
             []
     ,   ParseTest "parse_az09_"      "{"     parse_reject  '{'
@@ -913,15 +967,15 @@ parserTests = [
             [Left $ fromIntegral $ 2^64 - 1]
     ,   ParseTest "parse_integer"    (show (2^64) ++ "?") parse_fail '?'
             []
-    ,   ParseTest "parse_emit_int_or_identifier" "push1 " parse_success ' '
+    ,   ParseTest "parse_int_or_identifier" "push1 " parse_success ' '
             []
-    ,   ParseTest "parse_emit_int_or_identifier" "ident " parse_success ' '
+    ,   ParseTest "parse_int_or_identifier" "ident " parse_success ' '
             []
-    ,   ParseTest "parse_emit_int_or_identifier" "ret " parse_success ' '
+    ,   ParseTest "parse_int_or_identifier" "ret " parse_success ' '
             []
-    -- ,   ParseTest "parse_emit_int_or_identifier" "if 0 " parse_success ' '
+    -- ,   ParseTest "parse_int_or_identifier" "if 0 " parse_success ' '
     --        []
-    ,   ParseTest "parse_emit_int_or_identifier" "123 " parse_success ' '
+    ,   ParseTest "parse_int_or_identifier" "123 " parse_success ' '
             []
     ,   ParseTest "parse_rbrace" "}?" parse_success '?' 
             []
@@ -931,6 +985,8 @@ parserTests = [
             []
     ,   ParseTest "parse_block" "{?" parse_fail '?'
             []
+    ,   ParseTest "parse_block" "{}?" parse_success '?'
+            []
     ,   ParseTest "parse_block" "{ d1 123 d2 d3 }?" parse_success '?'
             []
     ,   ParseTest "parse_block" "{d1 123 d2 d3 }?" parse_success '?'
@@ -939,55 +995,55 @@ parserTests = [
             []
     ,   ParseTest "parse_block" "{d1 123 d2 d3} " parse_success ' '
             []
-    ,   ParseTest "parse_emit_if_term" "?" parse_reject '?'
+    ,   ParseTest "parse_if_term" "?" parse_reject '?'
             []
-    ,   ParseTest "parse_emit_if_term" "heyy?" parse_success '?'
+    ,   ParseTest "parse_if_term" "heyy?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "a?" parse_success '?'
+    ,   ParseTest "parse_if_term" "a?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "push1?" parse_success '?'
+    ,   ParseTest "parse_if_term" "push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "0?" parse_success '?'
+    ,   ParseTest "parse_if_term" "0?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "1337?" parse_success '?'
+    ,   ParseTest "parse_if_term" "1337?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "{push1}?" parse_success '?'
+    ,   ParseTest "parse_if_term" "{push1}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "{0 1 2}?" parse_success '?'
+    ,   ParseTest "parse_if_term" "{0 1 2}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term_wss" "1337  ?" parse_success '?'
+    ,   ParseTest "parse_if_term_wss" "1337  ?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term_wss" "?" parse_reject '?'
+    ,   ParseTest "parse_if_term_wss" "?" parse_reject '?'
             []
-    ,   ParseTest "parse_emit_if_term_wss" "test ?" parse_success '?'
+    ,   ParseTest "parse_if_term_wss" "test ?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term_wss" "test?" parse_success '?'
+    ,   ParseTest "parse_if_term_wss" "test?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "?" parse_success '?'
+    ,   ParseTest "parse_if_term_wsss" "?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "push1?" parse_success '?'
+    ,   ParseTest "parse_if_term_wsss" "push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "push1 ?" parse_success '?'
+    ,   ParseTest "parse_if_term_wsss" "push1 ?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "64?" parse_success '?'
+    ,   ParseTest "parse_if_term_wsss" "64?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_terms" "push1 64 push1?" parse_success '?'
+    ,   ParseTest "parse_if_term_wsss" "push1 64 push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz push1?" parse_success '?'
+    ,   ParseTest "parse_if_term" "if_top_nz push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz if_top_nz push1?" parse_success '?'
+    ,   ParseTest "parse_if_term" "if_top_nz if_top_nz push1?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz {d1 123 d2 d3}?" parse_success '?'
+    ,   ParseTest "parse_if_term" "if_top_nz {d1 123 d2 d3}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz{d1 123 d2 d3}?" parse_success '?'
+    ,   ParseTest "parse_if_term" "if_top_nz{d1 123 d2 d3}?" parse_success '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz {?" parse_fail '?'
+    ,   ParseTest "parse_if_term" "if_top_nz {?" parse_fail '?'
             []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz ?" parse_fail '?'
+    ,   ParseTest "parse_if_term" "if_top_nz ?" parse_fail '?'
             []
-    ,   ParseTest "parse_emit_if_term" "{push1 {push1}}?" 
+    ,   ParseTest "parse_if_term" "{push1 {push1}}?" 
             parse_success '?' []
-    ,   ParseTest "parse_emit_if_term" "if_top_nz {push1 if_top_nz {push1}}?" 
+    ,   ParseTest "parse_if_term" "if_top_nz {push1 if_top_nz {push1}}?" 
             parse_success '?' []
     ,   ParseTest "parse_def_body_end" "1.?" 
             parse_success '?' []
@@ -1001,11 +1057,32 @@ parserTests = [
             parse_success '?' []
     ,   ParseTest "parse_def" "ab = 3.?" 
             parse_success '?' []
---            [Left 2, Right (ascii 'b'), Right (ascii 'a')]
     ,   ParseTest "parse_def" "push2 = push1 push1 plus .?" 
             parse_success '?' []
     ,   ParseTest "parse_def" "push2 = push1 push1 plus . " 
             parse_success ' ' []
+    ,   ParseTest "parse_norparen" "?)"
+            parse_success ')' []
+    ,   ParseTest "parse_norparen" ")"
+            parse_reject ')' []
+    ,   ParseTest "parse_comment" "()?"
+            parse_success '?' []
+    ,   ParseTest "parse_comment" "( For ye shall go out with joy... )?"
+            parse_success '?' []
+    ,   ParseTest "parse_af09_hex" "0?" 
+            parse_success '?' [resultW8 0]
+    ,   ParseTest "parse_af09_hex" "9?" 
+            parse_success '?' [resultW8 9]
+    ,   ParseTest "parse_af09_hex" "A?" 
+            parse_success '?' [resultW8 10]
+    ,   ParseTest "parse_af09_hex" "F?" 
+            parse_success '?' [resultW8 15]
+    ,   ParseTest "parse_hex_w8" "0xA9?" 
+            parse_success '?' [resultW8 0xA9]
+    ,   ParseTest "parse_hex_w8" "0x00?" 
+            parse_success '?' [resultW8 0x00]
+    ,   ParseTest "parse_hex_w8" "0xFF?" 
+            parse_success '?' [resultW8 0xFF]
     ]
 
 getInput (ParseTest _ s _ _ _) = s
@@ -1095,54 +1172,3 @@ testSuiteParsers = do
     doc "PARSERS TEST SUITE"
     parseTestSuiteGen parserTests
     
-
-{-
-defineParseIdentifier :: X86_64 ()
-defineParseIdentifier = defFunBasic "parse_identifier" body
-  where
-    body = do
-        doc "Inspect the first character from the pstack"
-        xor rax rax
-        ppeerW8 0 al
-
-        -- callBody "dbg_dump_ptop_w8"
-
-        doc "Is the char less than ascii code a?"
-        cmp rax $ asciiI32 'a'
-        jlNear "PARSE_IDENTIFIER_REJECT"
-
-        doc "Is the char greater than ascii code z?"
-        cmp rax $ asciiI32 'z'
-        jgNear "PARSE_IDENTIFIER_REJECT"
-
-        doc "Parsing a sequence of a-z,0-9 and _."
-        doc "Place the rest of the input onto the stack..."
-        callLabel "READ_TAIL_AZ_W8"
-        ppop rax
-
-        cmp rax $ I32 parse_success
-        jeNear "PARSE_IDENTIFIER_SUCCESS"
-
-        cmp rax $ I32 parse_reject
-        jeNear "PARSE_IDENTIFIER_SUCCESS"
-
-        doc "Failure.."
-        ppush $ I32 parse_fail
-        ret
-
-        setLabel "PARSE_IDENTIFIER_SUCCESS"
-        do 
-            doc "Increment the count to account for the first character."
-            ppopW8 al -- continuation character
-            ppop rbx
-            inc rbx
-            ppush rbx
-            ppush al
-
-            ppush $ I32 parse_success
-            ret
-
-        setLabel "PARSE_IDENTIFIER_REJECT"
-        ppush $ I32 parse_reject
-        ret
--}
