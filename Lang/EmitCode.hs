@@ -11,6 +11,24 @@ import Lang.BasicFunctions
 import Lang.Debug
 import Lang.Linux
 
+defineEmitFunctions = do
+    doc "------------------------------------------------"
+    doc "Kernel  functions  that  allow us to bootstrap a"
+    doc "language that defines its own emit functionality"
+    doc "------------------------------------------------"
+    defineEmitIfStart
+    defineEmitIfStart
+    defineEmitIfEnd
+    defineEmitRet
+    defineEmitCall
+    defineEmitPPushW64
+    defineEmitPPushW8 
+
+    -- Allowing these leads to a self-extensible interpreter,
+    -- which allows for rapid prototyping
+    defineEmitW8
+    defineEmitW64
+
 defineEmitIfStart :: X86_64()
 defineEmitIfStart = defFunBasic "emit_if_start" body
   where
@@ -71,11 +89,39 @@ defineEmitIfEnd = defFunBasic "emit_if_end" body
         mov (derefOffset rax (-1)) bl
 
 
-defineEmitLit :: X86_64 ()
-defineEmitLit = defFunBasic funName body
+defineEmitPPushW8 :: X86_64 ()
+defineEmitPPushW8 = defFunBasic "emit_ppush_w8" body
   where
-    funName = "emit_lit_64"
-    ty      = undefined
+    body = do
+        doc "Emit assembly code in the dynamic code area"
+        doc "That pushes the 8bit literal from the stack onto the stack."
+        cpush rax
+        xor rax rax
+        ppopW8 al
+        doc "X86: sub RSI 1"
+        mov (derefOffset r9 0) (I8 0x48)
+        mov (derefOffset r9 1) (I8 0x81)
+        mov (derefOffset r9 2) (I8 0xEE)
+        mov (derefOffset r9 3) (I8 0x01)
+        mov (derefOffset r9 4) (I8 0x00)
+        mov (derefOffset r9 5) (I8 0x00)
+        mov (derefOffset r9 6) (I8 0x00)
+        add r9 (I32 7)
+
+        doc "X86: mov [RSI+0] <- IMM8"
+        doc "C6 46 00 AB"
+        mov (derefOffset r9 0) (I8 0xC6)
+        mov (derefOffset r9 1) (I8 0x46)
+        mov (derefOffset r9 2) (I8 0x00)
+        mov (derefOffset r9 3) al
+        add r9 (I32 4)
+
+        cpop rax
+
+defineEmitPPushW64 :: X86_64 ()
+defineEmitPPushW64 = defFunBasic funName body
+  where
+    funName = "emit_ppush_w64"
     body    = do
         doc "Emit assembly code in the dynamic code area"
         doc "That pushes a 64bit literal value on the stack."
@@ -96,13 +142,66 @@ defineEmitLit = defFunBasic funName body
             mov (derefOffset r9 6) (I8 0x00)
             add r9 (I32 7)
 
-        doc "X86: mov [RSI+0] <- IMM32"
+        doc "We want to load a whole imm64 value but the intel"
+        doc "manual doesn't say how to do that. We do two dword movs."
+
+        doc "emit mov dword [rsi+0] <- imm32"
+        doc "(c7 06 imm32)"
+        doc "then"
+        doc "emit mov dword [rsi+4] <- imm32"
+        doc "(c7 46 04 imm32)"
+        do
+            mov (derefOffset r9 0) (I8 0xC7)
+            mov (derefOffset r9 1) (I8 0x06)
+            mov (derefOffset r9 2) al
+            sar rax (I8 8)
+            mov (derefOffset r9 3) al
+            sar rax (I8 8)
+            mov (derefOffset r9 4) al
+            sar rax (I8 8)
+            mov (derefOffset r9 5) al
+            sar rax (I8 8)
+            doc "Emitted 6 bytes"
+            add r9 (I32 6)
+        do
+            mov (derefOffset r9 0) (I8 0xC7)
+            mov (derefOffset r9 1) (I8 0x46)
+            mov (derefOffset r9 2) (I8 0x04)
+            mov (derefOffset r9 3) al
+            sar rax (I8 8)
+            mov (derefOffset r9 4) al
+            sar rax (I8 8)
+            mov (derefOffset r9 5) al
+            sar rax (I8 8)
+            mov (derefOffset r9 6) al
+            sar rax (I8 8)
+            doc "Emitted 7 bytes"
+            add r9 (I32 7)
+
+        {-
         do
             mov (derefOffset r9 0) (I8 0x48)
             mov (derefOffset r9 1) (I8 0xC7)
             mov (derefOffset r9 2) (I8 0x46)
             mov (derefOffset r9 3) (I8 0x00)
-            -- TODO: simplify - copy from 32 bit register eax 4 bytes directly
+            -- TODO: Could we copy from 32 bit register eax 4 bytes directly?
+            mov (derefOffset r9 4) al
+            sar rax (I8 8)
+            mov (derefOffset r9 5) al
+            sar rax (I8 8)
+            mov (derefOffset r9 6) al
+            sar rax (I8 8)
+            mov (derefOffset r9 7) al
+            sar rax (I8 8)
+            add r9 (I32 8)
+
+        doc "X86: mov [RSI+4] <- IMM32"
+        do
+            mov (derefOffset r9 0) (I8 0x48)
+            mov (derefOffset r9 1) (I8 0xC7)
+            mov (derefOffset r9 2) (I8 0x46)
+            mov (derefOffset r9 3) (I8 0x04)
+            -- TODO: Could we copy from 32 bit register eax 4 bytes directly?
             mov (derefOffset r9 4) al
             sar rax (I8 8)
             mov (derefOffset r9 5) al
@@ -112,24 +211,36 @@ defineEmitLit = defFunBasic funName body
             mov (derefOffset r9 7) al
             add r9 (I32 8)
 
-        doc "FIXME: Only 32bits are moved, but we need all 64!!!"
-
+        -}
         doc "Restore rax"
         cpop rax
 
-defineEmit :: X86_64 ()
-defineEmit = defFunBasic "emit_w8" body 
+defineEmitW8 :: X86_64 ()
+defineEmitW8 = defFunBasic "emit_w8" body 
   where
     body = do
         doc "Takes the w8 value from the top of the stack and emits it"
         doc "in the JIT code generation area. Uses RAX"
         -- cpush rax
         -- xor rax rax
+
+        -- writeMsgHelper ":: emit "
+        -- callLabel "dbg_dump_ptop_w8"
+
         ppop al
         mov (derefOffset r9 0) al
         inc r9
         -- cpop rax
-        
+ 
+defineEmitW64 :: X86_64 ()
+defineEmitW64 = defFunBasic "emit_w64" body
+  where
+    body = do
+        -- writeMsgHelper ":: emit "
+        -- callLabel "dbg_dump_ptop_w64"
+        ppop rax
+        mov (derefOffset r9 0) rax
+        add r9 (I32 8)
         
 
 defineEmitRet :: X86_64 ()

@@ -43,10 +43,11 @@ defineParsers = do
     defineParseAZ_
     defineParseWhitespace
     defineParseWhitespaceSeq
-    defineParseZero
-    defineParseX
+    -- defineParseZero
+    defineParseHash
     defineParse09
     defineParse09s
+    defineParseIntegerW64
     defineParseInteger
     defineParseIfTerm
     defineParseIfTermWS
@@ -70,52 +71,10 @@ defineParsers = do
     defineParseCommentOrBlock 
     defineParse09Hex
     defineParseAFHex
-    defineParseHexPrefix 
-    defineParseAF09Hex
+    defineParseAF09Hex 
+    -- defineParseHexPrefix 
     defineParseHexBody 
-    defineParseHexW8
-
--- Parses input. Skips whitespace, control characters, etc. 
--- Stops at the first non-such char and pushes it on the stack.
--- Type : -> :w8        :w64
--- Func : -> :read_char:success
-{-
-defineRdHeadW8 :: X86_64 ()
-defineRdHeadW8 = defFunBasic "read_head_w8" body
-  where
-    body = do
-        doc "Allocate 1 byte on the parameter-stack in which our"
-        doc "first non-whitespace character is placed:"
-        ppush $ I8 0x00
-
-        asm $ setLabel "RPC_WHILE"
-        doc "Please read"
-        mov rax $ I64 $ fromIntegral linux_sys_read
-        doc "1 char"
-        mov rdx $ I64 0x01 
-        doc "From stdin"
-        xor rbx rbx
-        doc "Into the pstack"
-        mov rcx rsi
-        int
-
-        cmp rax $ I32 0x00
-        jeNear "RPC_ERROR"
-
-        xor rax rax
-        ptopW8 al
-
-        cmp rax $ I32 0x20 
-        jleNear "RPC_WHILE" -- Space or Control character, skip
-        cmp rax $ I32 0x7F
-        jeNear  "RPC_WHILE" -- ESC, skip
-
-        ppush $ I32 1 -- Success
-        ret
-
-        asm $ setLabel "RPC_ERROR"
-        ppush $ I32 0 -- Fail
--}
+    defineParseIntegerW8
 
 -- Reads 1 character of input into the r8 register. 
 -- Type : -> :w64
@@ -133,7 +92,7 @@ defineRdHeadW8 = defFunBasic "read_head_w8" body
         doc "1 char"
         mov rdx $ I64 0x01 
         doc "From stdin"
-        xor rbx rbx
+        mov rbx $ I64 $ fromIntegral linux_stdin
         doc "Into the pstack"
         mov rcx rsi
         int
@@ -495,12 +454,12 @@ defineParseRBrace = parseTerminal "parse_rbrace" (inputTestChar '}') noop
 defineParseLParen = parseTerminal "parse_lparen" (inputTestChar '(') noop
 defineParseRParen = parseTerminal "parse_rparen" (inputTestChar ')') noop
 defineParseNoRParen = parseTerminal "parse_norparen" (inputTestNotChar ')') noop
-defineParseX = parseTerminal "parse_x" (inputTestChar 'x') noop
-defineParseZero = parseTerminal "parse_zero" (inputTestChar '0') noop
+defineParseHash     = parseTerminal "parse_hash" (inputTestChar '#') noop
+-- defineParseZero = parseTerminal "parse_zero" (inputTestChar '0') noop
 
 defineParseBlockEnd = do
     parseSequence False "parse_block_end" 
-        noop "parse_if_term_wsss" noop "parse_rbrace" noop
+        noop "parse_stmt_wsss" noop "parse_rbrace" noop
 
 defineParseBlock = do
     parseSequence True "parse_block"
@@ -573,9 +532,9 @@ defineParseIdentifier = do
     process = do
         ppush r15
 
-defineParseInteger = do
+defineParseIntegerW64 = do
     doc "[0-9][0-9]*"
-    parseSequence False "parse_integer" 
+    parseSequence False "parse_integer_w64" 
         init "parse_09" noop "parse_09s" process
   where
     init = do
@@ -613,20 +572,20 @@ defineParseInteger = do
             mul rcx
             -- TODO: Prove that this cannot overflow if we check 
             -- the add overflow below.
-            joNear "parse_integer_fail"
+            joNear "parse_integer_w64_fail"
 
             doc "Add rax to the r10 accumulator"
             doc "We use Jump Carry to detect overflow, since we assume"
             doc "that the integers that we are are adding are unsigned."
             add r10 rax
-            jcNear "parse_integer_fail"
+            jcNear "parse_integer_w64_fail"
 
             doc "Multiply rcx by constant 10 (our base)"
             mov rdx $ I64 10
             mov rax rcx
             mul rdx
             -- TODO: Check how mul reports overflow!
-            -- joNear "parse_integer_fail"
+            -- joNear "parse_integer_w64_fail"
             mov rcx rax
             
             jmpLabel "parse_integer_loop"
@@ -684,54 +643,110 @@ defineParseHexBody = do
         add rax rbx
         ppush al
         
-
+{-
+ - Removed because of ambiguity with integer 0
 defineParseHexPrefix :: X86_64 ()
 defineParseHexPrefix = do
     parseSequence False "parse_hex_prefix"
         noop "parse_zero" noop "parse_x" noop
+-}
 
-defineParseHexW8 :: X86_64 ()
-defineParseHexW8 = do
-    parseSequence False "parse_hex_w8"
-        noop "parse_hex_prefix" noop "parse_hex_body" noop
+defineParseIntegerW8 :: X86_64 ()
+defineParseIntegerW8 = do
+    parseSequence False "parse_integer_w8"
+        noop "parse_hash" noop "parse_hex_body" noop
 
 defineParseIfTermWS = 
-    parseSequence False "parse_if_term_wss" 
-        noop "parse_if_term" noop "parse_wss" noop
+    parseSequence False "parse_stmt_wss" 
+        noop "parse_stmt" noop "parse_wss" noop
 
 defineParseIfTerms = 
-    parseStar "parse_if_term_wsss" 
-        "parse_if_term_wss" noop noop
+    parseStar "parse_stmt_wsss" 
+        "parse_stmt_wss" noop noop
 
 defineParseIfTerm = 
-    parseAlt "parse_if_term"
+    parseAlt "parse_stmt"
         "parse_comment_or_block" processBlock
-        "parse_int_or_identifier" processIntOrIdentifier
+        "parse_int_or_term" processIntOrIdentifier
   where
     processBlock _           = noop
     processIntOrIdentifier _ = noop
+
+defineParseInteger = 
+    parseAlt "parse_integer"
+        "parse_integer_w8"  processInt8
+        "parse_integer_w64" processInt64
+  where
+    processInt64 _ = callLabel "emit_ppush_w64"
+    processInt8 _  = callLabel "emit_ppush_w8"
         
 defineParseIntOrIdentifier = 
-    parseAlt "parse_int_or_identifier" 
-        "parse_integer"    processInteger
-        "parse_identifier" processIdentifier
+    parseAlt "parse_int_or_term" 
+        "parse_integer"     noprocess
+        "parse_identifier"  processIdentifier
   where
-    processInteger _ = do
-        callLabel "emit_lit_64"
+    noprocess _ = noop
     processIdentifier failLabel = do
         doc "parse_identifier has succeeded."
         doc "Check the kind of identifier that we have..."
         -- writeMsgHelper "Identifier case\n"
 
+        -- writeMsgHelper "lookup identifier length:\n"
+        -- callLabel "dbg_dump_ptop_w64"
+        -- ppop rax
+        -- callLabel "dbg_dump_ptop_w8"
+        -- ppush rax
+
         callLabel "term_hash"
+        -- writeMsgHelper "looking for identifier hash:\n"
+        -- callLabel "dbg_dump_ptop_w64"
+
         doc "Place the hash in rax"
         ppop rax 
 
         doc "Now test our identifier against various options:"
+
+        doc "Does it equal the hash of 'compile'?"
+        mov rbx (I64 $ fnv1s "compiler")
+        cmp rax rbx
+        jneNear "parse_stmt_not_compiler"
+        do 
+            doc "We have a compiler statement! We wish to switch"
+            doc "from emitting JIT calls to running the calls directly here."
+            doc "For this, we need a state variable of some sort..."
+
+            doc "This will be very hard to explain, but what we do is:"
+            doc "(1) Generate a jump instruction to avoid the code "
+            doc "that the parser generates next: TODO"
+
+            doc "(2) we back up the current r9"
+            ppush r9
+
+
+            doc "(3) call the parser on a statement. This generates some "
+            doc "code and increases r9. "
+            callRequiredParser "parse_stmt" failLabel
+
+            doc "(4) Update the jump instruction emitted at (1) to jump "
+            doc "to the current r9 - as on an if statement that doesn't match"
+            doc "TODO"
+
+            doc "(5) Execute the code from the position we have backed up."
+
+            ppop rax
+            call rax
+
+            doc "We have generated some junk in the definition bodies memory zone"
+            doc "that we won't need anymore or reuse, but we'll find "
+            doc "a better way some other time -- this is just a hack! "
+
+            jmpLabel "parse_stmt_done"
+
+        setLabel "parse_stmt_not_compiler"
         doc "Does it equal the hash of 'if'?"
         mov rbx (I64 $ fnv1s "if_top_nz")
         cmp rax rbx
-        jneNear "parse_if_term_not_if"
+        jneNear "parse_stmt_not_if"
 
         -- writeMsgHelper "If term\n"
         doc "Parsing an if term!"
@@ -745,7 +760,7 @@ defineParseIntOrIdentifier =
             doc "Parse the if body, which could be anything from a simple"
             doc "term to a block term to another if term:"
 
-            callRequiredParser "parse_if_term" failLabel
+            callRequiredParser "parse_stmt" failLabel
 
             doc "(Note: it is critical that the program returns here"
             doc "to the same stack point as at the emit_if_start call "
@@ -753,26 +768,26 @@ defineParseIntOrIdentifier =
             doc "by emit_if_start)!"
 
             callBody "emit_if_end"
-            jmpLabel "parse_if_term_done"
+            jmpLabel "parse_stmt_done"
 
-        setLabel "parse_if_term_not_if"
+        setLabel "parse_stmt_not_if"
 
         doc "Try out whether it is a return statement? (ret)"
         mov rbx (I64 $ fnv1s "ret")
         cmp rax rbx
-        jneNear "parse_if_term_not_ret"
+        jneNear "parse_stmt_not_ret"
 
         doc "Parsing a 'ret' keyword!"
         do
             -- doc "Consume any whitespace after the ret-term"
             -- callOptionalParser "parse_wss" failLabel
             callBody "emit_ret"
-            jmpLabel "parse_if_term_done"
+            jmpLabel "parse_stmt_done"
 
-        setLabel "parse_if_term_not_ret"
+        setLabel "parse_stmt_not_ret"
 
         doc "Is it an identifier found in the "
-        doc "environment?"
+        doc "dictionary?"
         do
             -- doc "Consume any whitespace after the term"
             -- callOptionalParser "parse_wss" failLabel
@@ -781,25 +796,24 @@ defineParseIntOrIdentifier =
             callLabel "term_look"
             ppop rax
             cmp rax (I32 0)
-            jeNear "parse_if_term_undefined"
+            jeNear "parse_stmt_undefined"
 
             doc "Found the term in the dictionary! Emit a call to the address."
             callLabel "emit_call"
 
-            jmpLabel "parse_if_term_done"
+            jmpLabel "parse_stmt_done"
 
-        setLabel "parse_if_term_undefined"
+        setLabel "parse_stmt_undefined"
         do
             writeMsgHelper "Undefined term skipped!\n"
             doc "Note we could also have the parser ignore the failure..."
-            jeNear failLabel
+            jmpLabel failLabel
 
-
-        setLabel "parse_if_term_done"
+        setLabel "parse_stmt_done"
 
 
 defineParseDefBodyEnd = parseSequence False "parse_def_body_end"
-    noop "parse_if_term_wsss" noop "parse_dot" noop
+    noop "parse_stmt_wsss" noop "parse_dot" noop
 
 defineParseDefBody = parseSequence True "parse_def_body"
     noop "parse_equal" noop "parse_def_body_end" noop
@@ -822,27 +836,8 @@ defineParseDef = defFunBasic parserName body
         cmp rax $ I32 parse_fail
         jeNear failLabel
 
-        doc "Build a new [ prev ][ name hash ][ addr ] record on the stack"
-        doc "for the new dictionary definition."
+        callLabel "new_def"
 
-        doc "At this point the stack contains the term parsed by "
-        doc "parse_identifier. Hash it and save the hash in rax."
-
-        callBody "term_hash"
-        ppop rax
-
-        doc "Backup the current r11 in rbx"
-        mov rbx r11
-        
-        doc "Advance r11 to make space for the new record"
-        add r11 $ I32 24 
-        doc "save [prev] (the previous dictionary entry) from the backup"
-        mov (derefOffset r11 0)  rbx 
-        doc "save [name hash]"
-        mov (derefOffset r11 8)  rax 
-        doc "save [addr] the address of the definition body (the current r9)"
-        mov (derefOffset r11 16) r9  
-    
         callLabel "parse_wss" 
         pdrop 1
 
@@ -884,291 +879,4 @@ defineParseCommentBody =
 defineParseNoRParens = 
     parseStar "parse_norparens" "parse_norparen" noop noop 
 
-data ParseTest = ParseTest
-    String  -- Parser label (function name)
-    String  -- Parser stdin input that is passed to the parser
-    Word32  -- Expected parser result, a w64 on the stack.
-    Char    -- If the parser doesn't fail, expected continuation w8.
-    [Either Word64 Word8] -- Literals that must be present on the stack 
-                          -- on success: the data that the parser leaves
-                          -- behind.
-        
-resultAscii = Right . ascii
-resultW8    = Right 
-
--- TODO: Do a check that the test coverage is 100%
--- TODO: Make the tests check the emitted code as well
-parserTests = [
-        ParseTest "parse_09" "?" parse_reject  '?'
-            []
-    ,   ParseTest "parse_09" "0?" parse_success '?'
-            [resultAscii '0']
-    ,   ParseTest "parse_09" "9?" parse_success '?'
-            [resultAscii '9']
-    ,   ParseTest "parse_09" "/" parse_reject '/'
-            []
-    ,   ParseTest "parse_09" ":" parse_reject ':'
-            []
-    ,   ParseTest "parse_ws" "?" parse_reject  '?'
-            []
-    ,   ParseTest "parse_ws" " ?" parse_success '?'
-            []
-    ,   ParseTest "parse_wss" "?" parse_success '?'
-            []
-    ,   ParseTest "parse_wss" "   ?" parse_success '?'
-            []
-    ,   ParseTest "parse_az09_"      "a?"    parse_success '?'
-            [resultAscii 'a']
-    ,   ParseTest "parse_az09_"      "z?"    parse_success '?'
-            [resultAscii 'z']
-    ,   ParseTest "parse_az09_"      "`"     parse_reject  '`'
-            []
-    ,   ParseTest "parse_az09_"      "{"     parse_reject  '{'
-            []
-    ,   ParseTest "parse_identifier" "abc?"  parse_success '?'
-            [Left 3, Right (ascii 'c'), Right (ascii 'b'), Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a?"    parse_success '?'
-            [Left 1, Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a_?"   parse_success '?'
-            [Left 2, Right (ascii '_'), Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a0?"   parse_success '?'
-            [Left 2, Right (ascii '0'), Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a9?"   parse_success '?'
-            [Left 2, Right (ascii '9'), Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a/"    parse_success '/'
-            [Left 1, Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "a:"    parse_success ':'
-            [Left 1, Right (ascii 'a')]
-    ,   ParseTest "parse_identifier" "`"     parse_reject  '`'
-            []
-    ,   ParseTest "parse_identifier" "{"     parse_reject  '{'
-            []
-    ,   ParseTest "parse_identifier" "0"     parse_reject  '0'
-            []
-    ,   ParseTest "parse_integer"    "/"     parse_reject  '/'
-            []
-    ,   ParseTest "parse_integer"    ":"     parse_reject  ':'
-            []
-    ,   ParseTest "parse_integer"    "9?"    parse_success '?'
-            [Left 9]
-    ,   ParseTest "parse_integer"    "0?"    parse_success '?'
-            [Left 0]
-    ,   ParseTest "parse_integer"    "1234?" parse_success '?'
-            [Left 1234]
-    ,   ParseTest "parse_integer"    "001234?" parse_success '?'
-            [Left 1234]
-    ,   ParseTest "parse_integer"    "12a"   parse_success 'a'
-            [Left 12]
-    ,   ParseTest "parse_integer" (show (2^32 - 1) ++ "?") parse_success '?'
-            [Left $ fromIntegral $ 2^32 - 1] 
-    ,   ParseTest "parse_integer"    (show (2^32) ++ "?") parse_success '?'
-            [Left $ fromIntegral $ 2^32]
-    ,   ParseTest "parse_integer"    (show (2^64 - 1) ++ "?") parse_success '?'
-            [Left $ fromIntegral $ 2^64 - 1]
-    ,   ParseTest "parse_integer"    (show (2^64) ++ "?") parse_fail '?'
-            []
-    ,   ParseTest "parse_int_or_identifier" "push1 " parse_success ' '
-            []
-    ,   ParseTest "parse_int_or_identifier" "ident " parse_success ' '
-            []
-    ,   ParseTest "parse_int_or_identifier" "ret " parse_success ' '
-            []
-    -- ,   ParseTest "parse_int_or_identifier" "if 0 " parse_success ' '
-    --        []
-    ,   ParseTest "parse_int_or_identifier" "123 " parse_success ' '
-            []
-    ,   ParseTest "parse_rbrace" "}?" parse_success '?' 
-            []
-    ,   ParseTest "parse_rbrace" "?" parse_reject '?'
-            []
-    ,   ParseTest "parse_block" "?" parse_reject '?'
-            []
-    ,   ParseTest "parse_block" "{?" parse_fail '?'
-            []
-    ,   ParseTest "parse_block" "{}?" parse_success '?'
-            []
-    ,   ParseTest "parse_block" "{ d1 123 d2 d3 }?" parse_success '?'
-            []
-    ,   ParseTest "parse_block" "{d1 123 d2 d3 }?" parse_success '?'
-            []
-    ,   ParseTest "parse_block" "{d1 123 d2 d3}?" parse_success '?'
-            []
-    ,   ParseTest "parse_block" "{d1 123 d2 d3} " parse_success ' '
-            []
-    ,   ParseTest "parse_if_term" "?" parse_reject '?'
-            []
-    ,   ParseTest "parse_if_term" "heyy?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "a?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "push1?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "0?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "1337?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "{push1}?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "{0 1 2}?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wss" "1337  ?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wss" "?" parse_reject '?'
-            []
-    ,   ParseTest "parse_if_term_wss" "test ?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wss" "test?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wsss" "?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wsss" "push1?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wsss" "push1 ?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wsss" "64?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term_wsss" "push1 64 push1?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz push1?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz if_top_nz push1?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz {d1 123 d2 d3}?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz{d1 123 d2 d3}?" parse_success '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz {?" parse_fail '?'
-            []
-    ,   ParseTest "parse_if_term" "if_top_nz ?" parse_fail '?'
-            []
-    ,   ParseTest "parse_if_term" "{push1 {push1}}?" 
-            parse_success '?' []
-    ,   ParseTest "parse_if_term" "if_top_nz {push1 if_top_nz {push1}}?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def_body_end" "1.?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def_body_end" "1 .?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def_body_end" "1. " 
-            parse_success ' ' [] -- The definition shouldn't consume whitespace
-    ,   ParseTest "parse_def_body" "=1.?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def_body" "= 1.?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def" "ab = 3.?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def" "push2 = push1 push1 plus .?" 
-            parse_success '?' []
-    ,   ParseTest "parse_def" "push2 = push1 push1 plus . " 
-            parse_success ' ' []
-    ,   ParseTest "parse_norparen" "?)"
-            parse_success ')' []
-    ,   ParseTest "parse_norparen" ")"
-            parse_reject ')' []
-    ,   ParseTest "parse_comment" "()?"
-            parse_success '?' []
-    ,   ParseTest "parse_comment" "( For ye shall go out with joy... )?"
-            parse_success '?' []
-    ,   ParseTest "parse_af09_hex" "0?" 
-            parse_success '?' [resultW8 0]
-    ,   ParseTest "parse_af09_hex" "9?" 
-            parse_success '?' [resultW8 9]
-    ,   ParseTest "parse_af09_hex" "A?" 
-            parse_success '?' [resultW8 10]
-    ,   ParseTest "parse_af09_hex" "F?" 
-            parse_success '?' [resultW8 15]
-    ,   ParseTest "parse_hex_w8" "0xA9?" 
-            parse_success '?' [resultW8 0xA9]
-    ,   ParseTest "parse_hex_w8" "0x00?" 
-            parse_success '?' [resultW8 0x00]
-    ,   ParseTest "parse_hex_w8" "0xFF?" 
-            parse_success '?' [resultW8 0xFF]
-    ]
-
-getInput (ParseTest _ s _ _ _) = s
-
-parserTestSuiteStdin :: [String]
-parserTestSuiteStdin = map getInput parserTests
-
-testStack :: [Either Word64 Word8] -> X86_64 ()
-testStack [] = return ()
-testStack ((Right w8):xs) = do
-    assertPtopW8 (fromIntegral w8) "Unexpected stack data w8"
-    pdropW8 1
-    testStack xs
-testStack ((Left w64):xs) = do
-    assertPtop (fromIntegral w64) "Unexpected stack data w64"
-    pdrop 1
-    testStack xs
-
-parseTestSuiteGen [] = return ()
-parseTestSuiteGen (
-    (ParseTest lbl inp expected_result expected_cont_chr xs):rest) = do
-    doc $ "Testing parser " ++ lbl ++ " with input " ++ inp
-    writeMsgHelper $ "Testing parser " ++ lbl ++ " with input " ++ inp ++ "\n"
-
-    doc "Add a magical value on the stack to make sure that we find it"
-    doc "there after the test has completed. The test should not leave"
-    doc "things on the stack."
-    ppush $ I32 0xCAFE
-
-    callLabel "read_head_w8"
-    assertPtop 1 "read_head_w8 failed!"
-    pdrop 1
-
-    doc $ "Call parser " ++ lbl
-    callLabel lbl
-
-    assertPtop (fromIntegral expected_result) $ "Unexpected parser result" 
-    ppop rax
- 
-    cmp rax $ I32 parse_success
-    jeNear succLabel
-    cmp rax $ I32 parse_reject
-    jeNear rejeLabel
-    cmp rax $ I32 parse_fail
-    jeNear failLabel
-
-    doc "In case of success or rejection, test the continuation char:"
-    setLabel succLabel
-    setLabel rejeLabel
-
-    cmp contCharR8 (asciiI32 expected_cont_chr)
-    jneNear cchrLabel
-    {-
-    assertPtopW8 
-        (fromIntegral (ascii expected_cont_chr))
-        "Unexpected continuation char (w8)" 
-    pdropW8 1
-    -}
-
-    testStack xs
-    
-    doc "Test that our magic constant is present on the stack, i.e. that"
-    doc "no stack polution occurred after the parser has completed its run."
-    
-    assertPtop 0xCAFE "Stack polution detected"
-    pdrop 1
-
-    jmpLabel passLabel
-
-    setLabel cchrLabel
-    writeMsgHelper "Continuation character failure! (r8 register)\n"
-    ret
-
-    setLabel failLabel
-    doc "In case of failure we don't need to test the continuation char."
-
-    setLabel passLabel
-    parseTestSuiteGen rest
-  where
-    failLabel = lbl ++ "_" ++ inp ++ "_fail"
-    cchrLabel = lbl ++ "_" ++ inp ++ "_cchr"
-    succLabel = lbl ++ "_" ++ inp ++ "_success"
-    rejeLabel = lbl ++ "_" ++ inp ++ "_reject"
-    passLabel = lbl ++ "_" ++ inp ++ "_pass"
-
-testSuiteParsers = do
-    doc "PARSERS TEST SUITE"
-    parseTestSuiteGen parserTests
     

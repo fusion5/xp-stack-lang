@@ -24,7 +24,7 @@ import Data.Bits
 import Data.Maybe (listToMaybe)
 import Data.List (intercalate)
 
-import Lang.Parsing (testSuiteParsers, parserTestSuiteStdin)
+import Lang.ParserTests (testSuiteParsers, parserTestSuiteStdin)
 
 initParamStackLinux :: X86_64 ()
 initParamStackLinux = do

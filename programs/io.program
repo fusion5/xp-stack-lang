@@ -100,6 +100,115 @@ def define_ppush_cchar_w8 =
 
 run define_ppush_cchar_w8
 
+def def_ppush_r9 = 
+    (save register r9 to the stack)
+
+    #70 #70 #75 #73 #68 #5F #72 #39 8 new_def
+    ( "ppush_r9" in ascii hex )
+    
+    #48 emit_w8 #81 emit_w8 #EE emit_w8 
+        #08 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8 
+    (sub rsi 8)
+    #4C emit_w8 #89 emit_w8 #0E emit_w8
+    (mov [RSI+0], RR9)
+    (ppush r9)
+
+    emit_ret
+    ( emit function return )
+.
+
+run def_ppush_r9
+
+def emit_if_start = 
+    ( emit the code for the if start and push on the pstack a pointer to help 
+      to find out the address at which the jump address should be written. )
+
+    ( copy the top of the stack into rax )
+    #48 emit_w8 #8B emit_w8 #06 emit_w8
+    ( mov rax, [rsi] )
+    
+    #48 emit_w8 #3D emit_w8 
+        #00 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8 
+    ( cmp rax, 0x00 )
+    ( compare rax to 0 )
+
+    #0F emit_w8 #84 emit_w8 
+        #00 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8
+    ( we don't yet know the jump offset. To fill this
+      out later in if_end, save the position at which the
+      address is to be written, hence the r9 ppush.
+      Recall that r9 is the pointer to the definition bodies.
+      The offset is 0 now but it will overwritten.
+      The offset is calculated from the position of JE, 0F 84 
+    )
+
+    ppush_r9
+.
+
+def def_if_start = 
+    ( emit the code for the if start and push on the pstack a pointer to help 
+      to find out the address at which the jump address should be written. )
+
+    #69 #66 #5F #73 #74 #61 #72 #74 8 new_def
+    ( "if_start" in ascii hex )
+
+    ( copy the top of the stack into rax )
+    #48 emit_w8 #8B emit_w8 #06 emit_w8
+    ( mov rax, [rsi] )
+    
+    #48 emit_w8 #3D emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8 
+    ( cmp rax, 0x00 )
+    ( compare rax to 0 )
+
+    #0F emit_w8 #84 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8 #00 emit_w8
+    ( we don't yet know the jump offset. To fill this
+      out later in if_end, save the position at which the
+      address is to be written, hence the r9 ppush.
+      Recall that r9 is the pointer to the definition bodies.
+      The offset is 0 now but it will overwritten.
+      The offset is calculated from the position of JE, 0F 84 
+    )
+
+    ppush_r9
+.
+
+run def_if_start
+
+def def_if_end =
+    ( if_end is the counterpart of if_start... )
+    ( it does not emit code itself; instead, it alters the Jump Equal
+      instruction emitted by the paired if_start)
+    ( on the stack is the r9 backup that allows us to calculate the
+      relative offset at which to write the current r9. )
+    ppush_r9
+    minus
+
+.
+
+run def_if_end
+
+q 
+
+def if = 
+    (should we introduce a 'parser' keyword that 
+        dynamically instructs the parser what to do?
+    )
+    compiler {
+        ( because of 'compiler', these instructions are executed by the compiler: )
+        ( - on the same data stack though, so be careful! )
+        emit_if_start
+        parse_stmt
+        emit_if_end
+    }
+.
+
+def def_if = 
+    (emit if start)
+    parse_if_term (todo: rename parse_if_term to parse_stmt
+        (a term, a literal, or a block))
+    (emit if end)
+.
+ 
 def parse_success = 2.
 def parse_reject  = 1.
 def parse_fail    = 0.
@@ -126,7 +235,8 @@ def parse_09 =
     drop_w64
     parse_success
 .
-    
+
+   
 def test_parser =
     rd_w8
     parse_09

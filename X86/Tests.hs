@@ -147,6 +147,10 @@ x86TestArray = [
   , (add rax (derefOffset r9 24)               , "add rax, [r9+24]")
   , (mov (derefOffset rax 8) bl                , "mov [rax+8], bl")
   , (mov (derefOffset rsp 8) bl                , "mov [rsp+8], bl")
+  , (mov (derefOffset rsi 1) (I8 0xAB)         , "mov byte [rsi+1], 0xAB")
+  -- just some quick tests
+  -- , (mov (derefOffset rsi 0) (I32 0x3)         , "mov dword [rsi+0], 0x3")
+  -- , (mov (derefOffset rsi 4) (I32 0x3)         , "mov dword [rsi+4], 0x3")
   -- , (joNear "TEST"                             , "jo .TEST")
   ]
 

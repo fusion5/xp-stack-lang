@@ -173,7 +173,7 @@ writeMsgHelper msg = do
     ppush rdx
     do
         mov rax $ I64 $ fromIntegral $ linux_sys_write
-        mov rbx $ I64 $ fromIntegral $ linux_stderr
+        mov rbx $ I64 $ fromIntegral $ linux_stdout
         mov rdx $ I64 $ fromIntegral $ length msg
         asm $ addString msg
         mov rcx (S64 msg)

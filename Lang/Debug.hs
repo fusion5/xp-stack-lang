@@ -44,7 +44,7 @@ assertGeneric n msg raxGet = do
  
     -- Write the standard assert failed error to stdout.
     mov rax $ I64 $ fromIntegral $ linux_sys_write
-    mov rbx $ I64 $ fromIntegral $ linux_stderr
+    mov rbx $ I64 $ fromIntegral $ linux_stdout
     mov rdx $ I64 $ fromIntegral $ length assertFailedMsg
     asm $ addString assertFailedMsg
     mov rcx (S64 assertFailedMsg)
@@ -57,7 +57,7 @@ assertGeneric n msg raxGet = do
 
     let msgWithNL = msg ++ "\n"
     mov rax $ I64 $ fromIntegral $ linux_sys_write
-    mov rbx $ I64 $ fromIntegral $ linux_stderr
+    mov rbx $ I64 $ fromIntegral $ linux_stdout
     mov rdx $ I64 $ fromIntegral $ length msgWithNL
     -- movLabelRef64 rcx assertMSGStart
     asm $ addString msgWithNL -- Add to strings table
@@ -207,6 +207,8 @@ defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_w8" body
     body = do
         doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the top of the stack."
+        -- TODO: Use instructions that back up/restore all registers (just in 
+        -- case)
         ppush rax
         ppeer 1 rax
         ppush rbx

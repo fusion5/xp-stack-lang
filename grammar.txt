@@ -31,6 +31,7 @@ Combinator | means alternative
 <identifier> = <az_> <> <az09_s>
 <integer>    = 09 <> 09s
 
+Hex constants, e.g. 0xFF, 0x00, etc.
 <hex_prefix> = <zero> <> <x>
 <hex_body>   = <af09> <> <af09>
 <hex_w8>     = <hex_prefix> <> <hex_body>
@@ -45,9 +46,9 @@ Combinator | means alternative
 <if_term_wss>       = <if_term> <> <wss>
 <if_term_wsss>      = <if_term_wss>*
 
-<def_body>          = equal <+> def_body_end
-<def_body_end>      = <if_term_wsss> <> <dot>
 <def>               = <identifier> <+> <def_body>
+<def_body>          = <equal> <+> <def_body_end>
+<def_body_end>      = <if_term_wsss> <> <dot>
 
 
 
