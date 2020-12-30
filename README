@@ -1,33 +1,43 @@
 What is it?
 
-A personal experimentation project that started in 2019 with the goal of 
-exploring implementation methods of a stack-based programming language 
-inspired by Forth. 
+  A personal experimentation project that started in 2019 to explore 
+implementation methods of a stack-based programming language inspired by Forth.
 
-It's a work in progress currently undergoing refactoring.
+  It's a work in progress currently undergoing refactoring.
 
-Goals:
+Medium-term to-do list:
+
 - Generate just-in-time code from dictionary definitions (stack procedures) 
   entered in a REPL
-- Add strong typing over the procedures
-- ?
+- Self-defining language: the bootstrapping environment provides some basic
+  parsers, and the programmer defines other parsers in the language itself,
+  thus extending the language
+- Aim to add strong typing to guarantee memory safety and type safety
+- Once the language is stable enough, port the bootstrap system from Haskell 
+  into the stack-based language itself.
+
 
 VISION
 
-A bootstrapped programming environment that a single person can fully 
-understand. The accumulated complexity of existing software is something too 
-much for someone trying to understand everything completely.
+  The vision is to create a programming environment that a single person can 
+fully understand (possibly by re-implementing it from scratch).
+  The accumulated complexity of existing software caused by the support of
+legacy software results in too much code for someone who wishes to fully 
+audit and understand their tool-chain.
 
-This is an attempt to develop a programming environment that a single person
-can fully understand from the the CPU layer up, all in one place.
+  This is an attempt to develop a programming environment that a single person
+can fully understand down to the CPU layer, all in one software artifact.
 
-It is bootstrapped in the style of the first machines that were ever invented,
-although for now it relies on an existing operating system for providing system
-calls. Nevertheless, a future version is planned that bootstraps itself
-without a host operating system (a bootable version) and then there will be
-nothing between it and the CPU.
-
-The 'bootstrapping' means that you can look at any part of the binary
-code and understand what's going on. There is also documentation.
+  Although it is meant to be bootstrapped in the way of the early machines
+(with little to no previous infrastructure), for now it relies on a few operating 
+system calls (Windows and Linux are supported) for IO. A future bootable extension is 
+planned that doesn't need an operating system and that interfaces with the BIOS.
 
 
+CURRENT STATE
+
+  If you happen to read the code, please understand that writing this is a 
+learn-as-you-go process; therefore, please forgive any blind spots and 
+report any bugs that you might notice. Thanks to everyone in the community 
+(Stack Overflow, open source, OSDev, Github, documentation writers, etc.) 
+who publish online the necessary information that makes this possible!
