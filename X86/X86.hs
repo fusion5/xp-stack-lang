@@ -243,6 +243,13 @@ int = do
     emit1 0x80
     asm bflush
 
+int3 :: X86_64 ()
+int3 = do
+    docX86 "int3 (breakpoint trap)"
+    docX86 "Use this only in a debugger, otherwise it crashes"
+    emit1 0xCC
+    asm bflush
+
 add :: Val -> Val -> X86_64 ()
 add a b = do
     docX86 $ "add " ++ show a ++ " " ++ show b
@@ -450,7 +457,7 @@ push (I8 val) = do
 
 jmpLabel :: String -> X86_64()
 jmpLabel label = do
-    docX86 $ "jmp"
+    docX86 $ "jmp ." ++ label
     emit1 0xE9
     asm $ emitLabelOff32 label
     asm $ bflush

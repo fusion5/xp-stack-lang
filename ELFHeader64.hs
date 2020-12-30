@@ -59,8 +59,8 @@ elf64Header body = do
         e_shnum     = emit [0x00, 0x00]
         e_shstrndx  = emit [0x00, 0x00]
 
-programHeader :: Word64 -> ASM () -> ASM ()
-programHeader 
+elf64ProgramHeader :: Word64 -> ASM () -> ASM ()
+elf64ProgramHeader
     mem_offset  -- The program is loaded in memory at a certain offset.
     program =   -- The program
     do

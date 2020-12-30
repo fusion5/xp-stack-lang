@@ -11,9 +11,9 @@ x86TestArray :: [(X86_64 (), String)]
 x86TestArray = [
     {- Haskell assembly -}             {- Respective NASM command -}
     (setLabel "TEST"                   , ".TEST")
-  , (mov  rax  (I64 0x7766554433221100), "mov rax, 0x7766554433221100")
-  , (mov  r11  (I64 0x7766554433221100), "mov r11, 0x7766554433221100")
-  , (mov  rbx  (I64 0x2A)              , "mov rbx, 0x2A")
+  , (mov  rax (I64 0x7766554433221100) , "mov rax, 0x7766554433221100")
+  , (mov  r11 (I64 0x7766554433221100) , "mov r11, 0x7766554433221100")
+  , (mov  rbx (I64 0x2A)               , "mov rbx, 0x2A")
   , (mov  rsp rcx                      , "mov rsp, rcx")
   , (xor  rbx rbx                      , "xor rbx, rbx")
   , (xor  rax rbx                      , "xor rax, rbx")
@@ -148,6 +148,8 @@ x86TestArray = [
   , (mov (derefOffset rax 8) bl                , "mov [rax+8], bl")
   , (mov (derefOffset rsp 8) bl                , "mov [rsp+8], bl")
   , (mov (derefOffset rsi 1) (I8 0xAB)         , "mov byte [rsi+1], 0xAB")
+  -- In Windows we need to do this to get the TEB (Thread Environment Block)
+  , (dec rbx                                   , "mov ebx, [gs:0x30]")
   -- just some quick tests
   -- , (mov (derefOffset rsi 0) (I32 0x3)         , "mov dword [rsi+0], 0x3")
   -- , (mov (derefOffset rsi 4) (I32 0x3)         , "mov dword [rsi+4], 0x3")

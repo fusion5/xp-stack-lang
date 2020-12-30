@@ -11,3 +11,23 @@ Goals:
   entered in a REPL
 - Add strong typing over the procedures
 - ?
+
+VISION
+
+A bootstrapped programming environment that a single person can fully 
+understand. The accumulated complexity of existing software is something too 
+much for someone trying to understand everything completely.
+
+This is an attempt to develop a programming environment that a single person
+can fully understand from the the CPU layer up, all in one place.
+
+It is bootstrapped in the style of the first machines that were ever invented,
+although for now it relies on an existing operating system for providing system
+calls. Nevertheless, a future version is planned that bootstraps itself
+without a host operating system (a bootable version) and then there will be
+nothing between it and the CPU.
+
+The 'bootstrapping' means that you can look at any part of the binary
+code and understand what's going on. There is also documentation.
+
+

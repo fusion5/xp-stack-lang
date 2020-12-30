@@ -13,6 +13,7 @@ import Lang.Debug
 import Lang.BasicFunctions
 import Lang.Parsing
 import Lang.EmitCode
+import Lang.Datatypes
 
 def :: String -> X86_64 ()
 def defName = do

@@ -7,7 +7,7 @@ import ASM.Datatypes        -- Common datatypes
 import ASM.ASM
 import ASM.Pretty       -- Print ASM with nice comments (documentation)
 import ELFHeader64      -- ELF header
--- import Linux         -- Linux constants
+import PEHeader64       -- ELF header
 import X86.Datatypes    -- X86-specific assembly datatypes
 import X86.X86          -- X86-specific assembly code
 import X86.Tests        -- X86-specific test suite (with NASM commands)
@@ -18,16 +18,21 @@ import Lang.Lang
 import Lang.Debug
 import Lang.Linux
 import Lang.BasicFunctions
+import Lang.Datatypes
 
 import Data.Bits
 
 import Data.Maybe (listToMaybe)
-import Data.List (intercalate)
+import Data.List  (intercalate)
 
 import Lang.ParserTests (testSuiteParsers, parserTestSuiteStdin)
+import qualified Data.ByteString as BS
 
-initParamStackLinux :: X86_64 ()
-initParamStackLinux = do
+pstack_size_bytes = 10000
+reg_pstack        = rsi
+
+initParamStack :: Platform -> X86_64 ()
+initParamStack Linux = do
     docX86 "Initialise the heap. brk(), the Linux system call for this"
     docX86 "has id number 45. We use the heap as a function parameter"
     docX86 "stack (pstack), i.e. it is used to pass parameters to functions."
@@ -36,23 +41,38 @@ initParamStackLinux = do
     int
 
     docX86 "rax holds the program break address."
-    mov rsi rax 
+    mov reg_pstack rax 
 
     docX86 "A second brk() call is needed."
     mov rax (I64 linux_sys_brk) 
     docX86 "Set the heap start address as brk argument"
-    mov rbx rsi
+    mov rbx reg_pstack
     docX86 "Allocate 10k bytes for the pstack."
-    add rbx (I32 10000)
+    add rbx (I32 pstack_size_bytes)
     int
     -- FIXME: If the heap alloc didn't work then this 
     -- should throw a segmentation fault.
     docX86 "The parameter stack grows from large to small, "
     docX86 "similar to the call stack. Therefore we start from "
     docX86 "the highest possible address."
-    add rsi (I32 10000) 
-    docX86 "Now, rsi holds the pstack top."
+    add reg_pstack (I32 pstack_size_bytes) 
+    docX86 "Now, reg_pstack holds the pstack top."
+initParamStack Windows = do
+    docX86 "All Windows processes have kernel32.dll and ntdll.dll loaded"
+    docX86 "in memory after the startup. To call one of them, we must"
+    docX86 "first locate the kernel DLL using information from the PE header."
+    docX86 "1. Find the DLL base address"
 
+    -- mov ebx, fs -- register
+    docX86 "Shadow space (x64 calling convention):"
+    sub rsp (I32 32)
+    mov rcx (I64 0)
+    -- mov rdx (I32 pstack_size_bytes)
+    -- mov r8  mem_commit
+    -- mov r9  page_readwrite
+    -- call VirtualAlloc 
+
+-- TODO: Rename to initDictionaryBodiesLinux
 initJITDefinitionsMemLinux :: X86_64 ()
 initJITDefinitionsMemLinux = do
     docX86 "Allocate executable memory in which we place the body of "
@@ -66,6 +86,15 @@ initJITDefinitionsMemLinux = do
     mov r9  rax
     docX86 "r9 now holds the area where new just-in-time function definitions "
     docX86 "are placed."
+
+    {-
+    do
+        -- TEMP DEBUG
+        ppush r9
+        callLabel "dbg_dump_ptop_w64"
+        writeMsgHelper "JIT start\n"
+        pdrop 1
+    -}
 
     mov rbx rax -- An rbx of the program break means that we wish to extend the
                 -- program break
@@ -100,10 +129,10 @@ initDictionaryMemLinux = do
     mov (derefOffset r11 8)  (I32 0)
     mov (derefOffset r11 16) (I32 0)
 
-mainTP = do
+mainParserTests platform = do
     doc "Run the parser test suite"
     mov rbp rsp
-    initParamStackLinux
+    initParamStack platform
 
     initDictionaryMemLinux
     initJITDefinitionsMemLinux
@@ -117,11 +146,31 @@ mainTP = do
 
     baseDefBodies
 
-mainX86 = do
+bootstrapX86_64 platform = do
     doc "Initialise and start the language REPL."
 
+    -- int3
+    X86.X86.xor rax rax
+    -- TODO: Find mov/call opcodes that to do this more neatly?
+    mov rax (L64 "ExitProcess")
+    mov rax (rax `derefOffset` 0)
+
+    docX86 "Shadow space (x64 calling convention):"
+    sub rsp (I32 32)
+    mov rcx (I64 2129)
+    {-
+    mov rdx (I64 2129)
+    mov r8  mem_commit
+    mov r9  page_readwrite
+    -}
+    call rax
+
+    ret
+
+
+    {-
     mov rbp rsp
-    initParamStackLinux
+    initParamStack platform
 
     initDictionaryMemLinux
     initJITDefinitionsMemLinux
@@ -149,40 +198,90 @@ mainX86 = do
     callLabel "exit"
 
     baseDefBodies
+    -}
 
-assembly mainX86 = do
-    elf64Header $ programHeader vaddr_offset $ do
-        runX86 mainX86
-        doc "The string table with all collected strings:"
-        emitStringTable
-    replaceProgSize
+assembly Linux bodyX86_64 = do
+    elf64Header 
+        (
+            elf64ProgramHeader vaddr_offset 
+                (
+                    do
+                        runX86 bodyX86_64
+                        doc "The table of all collected strings:"
+                        emitStringTable
+                )
+        )
+    replaceProgSize -- TODO: Could be removed (by replacing it with label diffs)
     replaceLabels  vaddr_offset
     replaceStrRefs vaddr_offset
         where vaddr_offset = 0xC0000000
+assembly Windows bodyX86_64 = do
+    pe64Header image_base (
+        do
+            runX86 bodyX86_64
+            doc "The table of all collected strings:"
+            emitStringTable
+        )
+    replaceLabels  image_base
+    replaceStrRefs image_base 
+        where image_base = 0x400000
 
-doAction f as = 
+outputStr f as = 
     case assemble as of 
         Left err -> 
             putStrLn $ "Error: " ++ err
         Right s  -> 
             putStrLn $ f s
 
+outputByteStr f as = 
+    case assemble as of 
+        Left err -> 
+            putStrLn $ "Error: " ++ err
+        Right s  -> 
+            BS.putStr $ f s
+
+writeByteStr fname f as = 
+    case assemble as of 
+        Left err -> 
+            putStrLn $ "Error: " ++ err
+        Right s  -> 
+            BS.writeFile fname (f s)
+
+
 main :: IO ()
 main = do
     args <- getArgs
     case listToMaybe args of
-        Nothing               -> doAction ASM.Pretty.asmBytesOnly (assembly mainX86)
-        Just "dump_bytes"     -> doAction ASM.Pretty.asmBytesOnly (assembly mainX86)
-        Just "doc"            -> doAction ASM.Pretty.asmDocs      (assembly mainX86)
+        Nothing                 -> outputStr ASM.Pretty.asmHex $ 
+                                        assembly Linux (bootstrapX86_64 Linux)
+        Just "dump_bytes"       -> outputStr ASM.Pretty.asmHex $
+                                        assembly Linux (bootstrapX86_64 Linux)
+        Just "doc"              -> outputStr ASM.Pretty.asmDocs $
+                                        assembly Linux (bootstrapX86_64 Linux)
+        Just "bootstrap_x86_windows" 
+                                -> outputStr ASM.Pretty.asmHex $
+                                        assembly Windows (bootstrapX86_64 Windows)
+        Just "bootstrap_x86_windows_bin" 
+                                -> writeByteStr "main.exe" ASM.Pretty.asmBin $
+                                        assembly Windows (bootstrapX86_64 Windows)
+        Just "bootstrap_x86_windows_doc" 
+                                -> outputStr ASM.Pretty.asmDocs $
+                                        assembly Windows (bootstrapX86_64 Windows)
 
-        -- Related to the testing of parsers
-        Just "test_par"       -> doAction ASM.Pretty.asmBytesOnly (assembly mainTP)
-        Just "test_par_doc"   -> doAction ASM.Pretty.asmDocs      (assembly mainTP)
-        Just "test_par_stdin" -> mapM putStr parserTestSuiteStdin >> return ()
+        Just "bootstrap_x86_linux" 
+                                -> outputStr ASM.Pretty.asmHex $
+                                        assembly Linux (bootstrapX86_64 Linux)
+        -- Parser tests
+        Just "test_par"         -> outputStr ASM.Pretty.asmHex $
+                                        assembly Linux (mainParserTests Linux)
+        Just "test_par_doc"     -> outputStr ASM.Pretty.asmDocs $
+                                        assembly Linux (mainParserTests Linux)
+        Just "test_par_stdin"   -> mapM putStr parserTestSuiteStdin >> return ()
 
-        -- X86 opcode generation tests
-        Just "test_x86"       -> doAction ASM.Pretty.asmBytesOnly x86TestSuiteASM
-        Just "test_x86_n"     -> putStr   $ x86TestSuiteNASM
-        Just x                -> putStrLn $ "Unknown option \"" ++ x ++ "\"" ++
+        -- X86 opcode generation tests (Haskell vs. NASM)
+        Just "test_x86"         -> outputStr     ASM.Pretty.asmHex x86TestSuiteASM
+        Just "test_x86_bin"     -> outputByteStr ASM.Pretty.asmBin x86TestSuiteASM
+        Just "test_x86_n"       -> putStr   $ x86TestSuiteNASM
+        Just x                  -> putStrLn $ "Unknown option \"" ++ x ++ "\"" ++
                                  " of (dump_bytes, doc, test_x86, test_x86_n)"
 

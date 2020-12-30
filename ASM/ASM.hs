@@ -68,7 +68,10 @@ emitProgSize64 = bemit [SProgSize64]
 
 -- Append label ref to buffer
 emitLabelRef64 :: String -> ASM ()
-emitLabelRef64 lbl = bemit [SProgLabel64 lbl]-- emits [SProgLabel64 lbl]
+emitLabelRef64 lbl = bemit [SProgLabel64 lbl]
+
+emitLabelRef32 :: String -> ASM ()
+emitLabelRef32 lbl = bemit [SProgLabel32 lbl]
 
 emitLabelOff8 :: String -> ASM ()
 emitLabelOff8 lbl = do
@@ -81,6 +84,16 @@ emitLabelOff32 lbl = do
     asm_s <- get
     -- emits [SRelOffsetToLabel32 (asm_offset asm_s) lbl]
     bemit [SRelOffsetToLabel32 (asm_offset asm_s) lbl]
+
+emitLabelDiff32 :: String -> String -> ASM ()
+emitLabelDiff32 lbl1 lbl2 = do
+    asm_s <- get
+    bemit [SLabelDiff32 lbl1 lbl2]
+
+emitLabelDiff16 :: String -> String -> ASM ()
+emitLabelDiff16 lbl1 lbl2 = do
+    asm_s <- get
+    bemit [SLabelDiff16 lbl1 lbl2]
 
 bytes :: Integral a => (a -> Put) -> a -> [Word8]
 bytes putFun x = Prelude.map BS.c2w bs
@@ -141,7 +154,9 @@ instance Documentation ASM where
         modify $ append $ ASMDoc (asm_offset s) str
 
 instance Labelable ASM where
-    setLabel = setLabelASM
+    setLabel l = do 
+        bflush 
+        setLabelASM l
 
 
 {-
@@ -225,7 +240,7 @@ max8BitValI = fromIntegral (maxBound::Int8)
 
 min8BitValI :: Integer
 min8BitValI = fromIntegral (minBound::Int8)
-    
+
 emitStringTable :: ASM () 
 emitStringTable = do
     s <- get
@@ -269,28 +284,93 @@ replaceWithAbsVMemAddr32 label _ _ =
 
 -- Produce a 32 bit signed relative address from a label 
 -- reference to the label definition position.
-replaceWithRelOffsetToLabel32 label labelAddr64 refAddr64 = 
+relOffsetToLabel32 label labelAddr64 refAddr64 = 
     return $ bytes putWord32le $ fromIntegral $ labelAddr64 - refAddr64
 
 -- Produce an 8 bit signed relative address from a label 
 -- reference to the label definition position.
-replaceWithRelOffsetToLabel8 _ labelAddr64 refAddr64
+relOffsetToLabel8 _ labelAddr64 refAddr64
     | min8BitValI <= delta && delta <= max8BitValI =
         return $ bytes putWord8 $ fromIntegral $ delta
     where 
         delta :: Integer
         delta = fromIntegral $ labelAddr64 - refAddr64
-replaceWithRelOffsetToLabel8 label labelAddr64 refAddr64 = 
+relOffsetToLabel8 label labelAddr64 refAddr64 = 
     error $
         "An 8-bit offset to label is out of bounds: " ++ label ++ "\n" 
      ++ "The label points to address " ++ 
             showWord64 labelAddr64 ++ "\n"
      ++ "The source address is       " ++ 
             showWord64 refAddr64 ++ "\n"
-        
+
+-- Produce a 16 bit unsigned size from address lo (smaller) to address 
+-- hi (bigger)
+addrDiff32 llo64 lhi64 alo ahi
+    | 0 <= delta && delta <= (fromIntegral max32BitUnsigned) =
+        return $ bytes putWord32le $ fromIntegral $ delta
+    where
+        delta :: Integer
+        delta = fromIntegral $ ahi - alo
+addrDiff32 llo64 lhi64 _ _ =
+    error $ "The address difference from label " ++ llo64 ++ " to label " ++ 
+                lhi64 ++ " exceeds 4 bytes\n"
+
+addrDiff16 llo64 lhi64 alo ahi
+    | 0 <= delta && delta <= 2^16-1 =
+        return $ bytes putWord16le $ fromIntegral $ delta
+    where
+        delta :: Integer
+        delta = fromIntegral $ ahi - alo
+addrDiff16 llo64 lhi64 _ _ =
+    error $ "The address difference from label " ++ llo64 ++ " to label " ++ 
+                lhi64 ++ " exceeds 2 bytes\n"
+          
+ 
+elookup key map = 
+    case M.lookup key map of 
+        Nothing    -> error $ "Label reference not found: " ++ key
+        Just lbl64 -> return lbl64
+
 -- Replace Labels with Bytes 
 -- resolves label references with bound checks.
 -- Folds down ASMEmit structures (in the ASM monad because it may fail)
+replaceLabelEmits 
+  :: Word64
+  -> M.Map String Word64
+  -> ASMEmit String
+  -> [ASMEmit String] 
+  -> ASM [ASMEmit String]
+replaceLabelEmits vmemOff64 addrs emit@(SProgLabel64 l) rest = do
+    addr64   <- elookup l addrs
+    addEmits <- replaceWithAbsVMemAddr64 l vmemOff64 addr64
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+replaceLabelEmits vmemOff64 addrs emit@(SProgLabel32 l) rest = do
+    addr64   <- elookup l addrs
+    addEmits <- replaceWithAbsVMemAddr32 l vmemOff64 addr64
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+replaceLabelEmits _ addrs emit@(SRelOffsetToLabel32 currOff64 l) rest = do
+    addr64   <- elookup l addrs
+    addEmits <- relOffsetToLabel32 l addr64 (currOff64 + 4)
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+replaceLabelEmits _ addrs emit@(SRelOffsetToLabel8 currOff64 l) rest = do
+    addr64   <- elookup l addrs
+    addEmits <- relOffsetToLabel8 l addr64 (currOff64 + 1)
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+replaceLabelEmits vmemOff64 addrs emit@(SLabelDiff32 llo lhi) rest = do
+    addrLo64 <- elookup llo addrs
+    addrHi64 <- elookup lhi addrs
+    addEmits <- addrDiff32 llo lhi addrLo64 addrHi64
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+replaceLabelEmits vmemOff64 addrs emit@(SLabelDiff16 llo lhi) rest = do
+    addrLo64 <- elookup llo addrs
+    addrHi64 <- elookup lhi addrs
+    addEmits <- addrDiff16 llo lhi addrLo64 addrHi64
+    return $ emit:Prelude.map SWord8 addEmits ++ rest
+
+
+
+replaceLabelEmits vmemOff64 addrs emit rest = return $ emit:rest
+{-
 replaceLabelEmits
   :: Word64
   -> M.Map String Word64
@@ -306,7 +386,7 @@ replaceLabelEmits vmemOff64 addrs emit rest =
           Just lbl64 -> do
             replacementEmits <- repl lbl64 emit
             return $ emit:Prelude.map SWord8 replacementEmits ++ rest
-    where 
+    where
       repl lbl64 (SProgLabel64 l) =
         replaceWithAbsVMemAddr64 l vmemOff64 lbl64
       repl lbl64 (SProgLabel32 l) =
@@ -315,9 +395,10 @@ replaceLabelEmits vmemOff64 addrs emit rest =
         -- The offset is calculated from just AFTER the label,
         -- i.e. from currOff64 plus the label reference length,
         -- which for 32 bits is 4.
-        replaceWithRelOffsetToLabel32 l lbl64 (currOff64 + 4)
+        relOffsetToLabel32 l lbl64 (currOff64 + 4)
       repl lbl64 (SRelOffsetToLabel8 currOff64 l) =
         replaceWithRelOffsetToLabel8 l lbl64 (currOff64 + 1)
+-}
 
 -- Replace label references.
 replaceLabelsCode :: Word64              -- Virtual memory offset
@@ -347,6 +428,7 @@ replaceLabels vmemOffset = do
 -- Program size resolution --
 -----------------------------
 
+-- Could be removed and replaced with label diffs
 replaceProgSize :: ASM ()
 replaceProgSize = do
     s <- get

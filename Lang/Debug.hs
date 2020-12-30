@@ -144,7 +144,7 @@ defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_w64" body
   where
     body = do
         doc "Backup the registers used so as not to affect the caller"
-        doc "rax holds the top of the stack."
+        doc "rax holds the value at the top of the stack."
         ppush rax
         ppeer 1 rax
         ppush rbx

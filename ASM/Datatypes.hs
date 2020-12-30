@@ -24,11 +24,19 @@ data ASMEmit lt =
         Word64 -- Convenience copy of the current offset
         lt     -- Target label
     | SProgSize64 -- Program size, 64 bits
-    | SStrRef64   -- Reference to a string from the strings table
+    | SStrRef64   -- Reference by string to a string from the strings table
         String
+    | SLabelDiff32 lt lt  -- The 32 bit offset from the first label to 
+                          -- the second label. (Refactoring note: this
+                          -- could supersede SProgLabel*)
+    | SLabelDiff16 lt lt  -- The 16 bit offset from the first label to 
+                          -- the second label. (Refactoring note: this
+                          -- could supersede SProgLabel*)
+
     deriving (Eq, Show)
 
--- Assembly with labels and documentation
+-- Assembly with labels and documentation, allows the sequencing of code and
+-- labels and comments in any order
 data ASMCode =
       ASMEmit   Word64           -- Offset convenience copy
                 [ASMEmit String] -- A sequence of bytes to emit
@@ -38,11 +46,13 @@ data ASMCode =
                 String           -- Documentation
     deriving (Eq, Show)
 
+{-
 emitHasLabel (SProgLabel64 l)          = Just l
 emitHasLabel (SProgLabel32 l)          = Just l
 emitHasLabel (SRelOffsetToLabel32 _ l) = Just l
 emitHasLabel (SRelOffsetToLabel8 _ l)  = Just l
 emitHasLabel _                         = Nothing
+-}
 
 emitHasStrRef (SStrRef64 s) = Just s
 emitHasStrRef _ = Nothing
@@ -61,6 +71,8 @@ lenBytes (SRelOffsetToLabel32 _ _) = 4
 lenBytes (SRelOffsetToLabel8  _ _) = 1
 lenBytes (SProgSize64) = 8
 lenBytes (SStrRef64 _) = 8
+lenBytes (SLabelDiff32 _ _) = 4
+lenBytes (SLabelDiff16 _ _) = 2
 
 type ASM = StateT ASMState (Except String)
 

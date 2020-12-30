@@ -706,37 +706,73 @@ defineParseIntOrIdentifier =
 
         doc "Now test our identifier against various options:"
 
-        doc "Does it equal the hash of 'compile'?"
+        doc "Does it equal the hash of 'compiler'?"
         mov rbx (I64 $ fnv1s "compiler")
         cmp rax rbx
         jneNear "parse_stmt_not_compiler"
         do 
+
+            doc "Consume any whitespace after 'compiler'"
+            callOptionalParser "parse_wss" failLabel
+
+            doc "WARNING: This is a very ugly, temporary hack"
+            doc "We need to come up with a more elegant way to do this!!!"
+
             doc "We have a compiler statement! We wish to switch"
             doc "from emitting JIT calls to running the calls directly here."
             doc "For this, we need a state variable of some sort..."
-
-            doc "This will be very hard to explain, but what we do is:"
+            doc "As a hack we execute the generated JIT code (see comment"
+            doc "at the end of this block)"
+            
+            doc "This will be difficult to explain, but what we do is:"
             doc "(1) Generate a jump instruction to avoid the code "
-            doc "that the parser generates next: TODO"
+            doc "that the parser generates next:"
 
-            doc "(2) we back up the current r9"
+            doc "jmp to undefined address"
+            mov (derefOffset r9 0) (I8 0xE9)
+            mov (derefOffset r9 1) (I8 0x00)
+            mov (derefOffset r9 2) (I8 0x00)
+            mov (derefOffset r9 3) (I8 0x00)
+            mov (derefOffset r9 4) (I8 0x00)
+            add r9 (I32 5)
+
+            doc "(2) back up the current r9: this will help us to "
+            doc "overwrite the 0x00s above with a proper jump address."
             ppush r9
-
 
             doc "(3) call the parser on a statement. This generates some "
             doc "code and increases r9. "
             callRequiredParser "parse_stmt" failLabel
 
+            doc "Emit a return for the generated parse_stmt code"
+            callBody "emit_ret"
+
             doc "(4) Update the jump instruction emitted at (1) to jump "
             doc "to the current r9 - as on an if statement that doesn't match"
-            doc "TODO"
-
-            doc "(5) Execute the code from the position we have backed up."
-
+            doc "- retrieve the saved r9 from the stack:"
+            
             ppop rax
+            doc "- retrieve the current r9 from the stack:"
+            mov rbx r9
+            doc "- minus saved offset r9"
+            sub rbx rax
+
+            mov (derefOffset rax (-4)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-3)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-2)) bl
+            sar rbx (I8 8)
+            mov (derefOffset rax (-1)) bl
+            sar rbx (I8 8)
+            
+            doc "(5) Execute the code that was just generated "
+            doc "at the position we have backed up."
+
             call rax
 
-            doc "We have generated some junk in the definition bodies memory zone"
+            doc "We have generated some junk (temporary code) in the definition"
+            doc "bodies memory zone"
             doc "that we won't need anymore or reuse, but we'll find "
             doc "a better way some other time -- this is just a hack! "
 

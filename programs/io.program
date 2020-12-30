@@ -190,12 +190,12 @@ run def_if_end
 q 
 
 def if = 
-    (should we introduce a 'parser' keyword that 
+    (should we introduce a 'compiler' keyword that 
         dynamically instructs the parser what to do?
     )
     compiler {
         ( because of 'compiler', these instructions are executed by the compiler: )
-        ( - on the same data stack though, so be careful! )
+        ( - on the compiler data stack though, so be careful! )
         emit_if_start
         parse_stmt
         emit_if_end

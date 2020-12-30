@@ -9,6 +9,8 @@ import Text.Printf
 import Data.Char (toUpper)
 import qualified Data.Map as M
 import Data.Word
+-- import Data.Text.Internal.Unsafe.Char (unsafeChr8)
+import qualified Data.ByteString as BS
 
 legend :: String 
 legend = 
@@ -52,18 +54,33 @@ asmEmitPretty (SRelOffsetToLabel32 currOff64 lt) =
 asmEmitPretty (SRelOffsetToLabel8 currOff64 lt) = "{Rel8 " ++ lt ++ "} " 
 asmEmitPretty (SProgSize64) = "{Program Size} " 
 asmEmitPretty (SStrRef64 s) = "{StrRef " ++ s ++ "} " 
+asmEmitPretty (SLabelDiff32 l1 l2) = "{" ++ l2 ++ " - " ++ l1 ++ "} " 
+asmEmitPretty (SLabelDiff16 l1 l2) = "{" ++ l2 ++ " - " ++ l1 ++ "} " 
 
 -- Print only the bytes... it gets used at building a binary file.
-asmBytesOnly :: ASMState -> String
-asmBytesOnly endASMState = 
-    concat $ map asmBytesOnlyCode $ toList $ asm_instr endASMState
+asmHex :: ASMState -> String
+asmHex endASMState = 
+    concat $ map asmHexCode $ toList $ asm_instr endASMState
 
-asmBytesOnlyCode :: ASMCode -> String
-asmBytesOnlyCode (ASMEmit _ instrs) =
-    concat $ map asmBytesOnlyEmit instrs
-asmBytesOnlyCode _ = ""
+asmHexCode :: ASMCode -> String
+asmHexCode (ASMEmit _ instrs) =
+    concat $ map asmHexEmit instrs
+asmHexCode _ = ""
 
+asmHexEmit :: ASMEmit String -> String
+asmHexEmit (SWord8 w8) = showWord8 w8 ++ " "
+asmHexEmit _ = ""
 
-asmBytesOnlyEmit :: ASMEmit String -> String
-asmBytesOnlyEmit (SWord8 w8) = showWord8 w8 ++ " "
-asmBytesOnlyEmit _ = ""
+asmBin :: ASMState -> BS.ByteString
+asmBin endASMState = 
+    BS.concat $ map asmBinCode $ toList $ asm_instr endASMState
+
+asmBinCode :: ASMCode -> BS.ByteString
+asmBinCode (ASMEmit _ instrs) =
+    BS.concat $ map asmBinEmit instrs
+asmBinCode _ = BS.empty
+
+asmBinEmit :: ASMEmit String -> BS.ByteString
+asmBinEmit (SWord8 w8) = BS.singleton w8
+asmBinEmit _ = BS.empty
+
