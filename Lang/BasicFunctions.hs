@@ -1,7 +1,7 @@
 module Lang.BasicFunctions where
 
-import X86.Datatypes
-import X86.X86
+import X64.Datatypes
+import X64.X64
 
 import ASM.ASM
 import ASM.Datatypes
@@ -14,6 +14,10 @@ import qualified Data.Bits as B
 import Control.Monad
 
 import Lang.Linux
+
+rPstack    = rsi
+rDefBodies = r15
+rDictIdx   = r14
 
 -- String hash parameters
 fnvOffsetBasis = 0xCBF29CE484222325
@@ -34,63 +38,68 @@ fnv1Integral = fromIntegral . fnv1s
 
 fnv1Hex s = printf "%08X\n" $ fnv1s s
 
--- Parameter stack drop, alters the parameter stack register rsi
-pdrop :: Int32 -> X86_64 ()
+-- Parameter stack drop, alters the parameter stack register rPstack
+pdrop :: Int32 -> X64 ()
 pdrop numW64s =
-    add rsi $ I32 $ fromIntegral $ numW64s * 8
+    add rPstack $ I32 $ fromIntegral $ numW64s * 8
 
-pdropW8 :: Int32 -> X86_64 ()
+pdropW8 :: Int32 -> X64 ()
 pdropW8 numW8s = 
-    add rsi $ I32 $ fromIntegral $ numW8s
+    add rPstack $ I32 $ fromIntegral $ numW8s
 
 -- Parameter stack pop
-ppop :: Val -> X86_64 ()
+ppop :: Operand -> X64 ()
 ppop dst64@(R64 _) = do
-    doc $ "ppop " ++ show dst64
-    mov dst64 $ derefOffset rsi 0
-    add rsi $ I32 8
+    comment $ "ppop " ++ show dst64
+    mov dst64 $ derefOffset rPstack 0
+    add rPstack $ I32 8
 ppop dst@(R8 _) = do
-    mov dst $ derefOffset rsi 0
-    add rsi $ I32 1
+    mov dst $ derefOffset rPstack 0
+    add rPstack $ I32 1
 
 ppeek = ppeer 0
 
-ppeer :: Int32 -> Val -> X86_64 ()
+ppeer :: Int32 -> Operand -> X64 ()
 ppeer numW64s dst =
-    mov dst $ derefOffset rsi (fromIntegral $ numW64s * 8)
+    mov dst $ derefOffset rPstack (fromIntegral $ numW64s * 8)
 
-ppeerW8 :: Int32 -> Val -> X86_64 ()
+ppeerW8 :: Int32 -> Operand -> X64 ()
 ppeerW8 numW8s dst@(R8 r)  =
-    mov dst $ derefOffset rsi (fromIntegral numW8s)
+    mov dst $ derefOffset rPstack (fromIntegral numW8s)
 ppeerW8 _ _ = error "ppeerW8 requires an 8-bit register as parameter"
 
-ptopW8 :: Val -> X86_64 ()
+ptopW8 :: Operand -> X64 ()
 ptopW8 = ppeerW8 0
 
-ppopW8 :: Val -> X86_64 ()
+ppopW8 :: Operand -> X64 ()
 ppopW8 dst@(R8 reg) = ppop dst {- x86 $ do
-    mov dst $ derefOffset rsi 0
-    add rsi $ I32 1 -}
+    mov dst $ derefOffset rPstack 0
+    add rPstack $ I32 1 -}
 
-cpeerW8 :: Int32 -> Val -> X86_64 ()
+cpeerW8 :: Int32 -> Operand -> X64 ()
 cpeerW8 numW8s dst =
     mov dst $ derefOffset rsp (fromIntegral numW8s)
 
-cpeer :: Int32 -> Val -> X86_64 ()
+cpeer :: Int32 -> Operand -> X64 ()
 cpeer numW64s dst = 
     mov dst $ derefOffset rsp (fromIntegral $ numW64s * 8)
 
-ctop :: Val -> X86_64 ()
+ctop :: Operand -> X64 ()
 ctop = cpeer 0
 
-cpop :: Val -> X86_64 ()
+cpop :: Operand -> X64 ()
 cpop dst64@(R64 _) = do
-    doc $ "cpop " ++ show dst64
+    comment $ "cpop " ++ show dst64
     mov dst64 $ derefOffset rsp 0
     add rsp $ I32 8
 cpop dst@(R8 _) = do
     mov dst $ derefOffset rsp 0
     add rsp $ I32 1
+
+cdrop :: Word8 -> X64()
+cdrop n = do
+    add rsp $ I32 (fromIntegral n)
+    
 
 
 -- Parameter push on the parameter stack (pstack), a different 
@@ -101,11 +110,11 @@ cpop dst@(R8 _) = do
 -- TODO: Consider the benefits of only supporting w64 on pstack and have 
 -- another stack for w8?
 -- FIXME: Rather than RSI use RBP which isn't used anyway.
-ppush :: Val -> X86_64 ()
+ppush :: Operand -> X64 ()
 ppush v | supported v = do
-    doc $ "ppush " ++ show v
-    sub rsi $ I32 $ sz v
-    mov (derefOffset rsi 0) v
+    comment $ "ppush " ++ show v
+    sub rPstack $ I32 $ sz v
+    mov (derefOffset rPstack 0) v
     where sz (I64 _)    = 8
           sz (R64 _)    = 8
           sz (RR64 _ _) = 8
@@ -120,9 +129,9 @@ ppush v | supported v = do
           supported _ = False
 ppush v = error $ "ppush doesn't support " ++ show v
 
-cpush :: Val -> X86_64 ()
+cpush :: Operand -> X64 ()
 cpush v | supported v = do
-    doc $ "cpush " ++ show v
+    comment $ "cpush " ++ show v
     sub rsp $ I32 $ sz v
     mov (derefOffset rsp 0) v
     where sz (I64 _)    = 8
@@ -137,15 +146,16 @@ cpush v | supported v = do
           supported (I32 _) = True
           supported (R64 _) = True
           supported _ = False
-cpush v = error $ "cpush doesn't support " ++ show v
+cpush v = error $ "cpush doesn't support operand " ++ show v ++ 
+            " (only registers are supported)"
 
 -- Push a string on the stack
-ppushStr :: String -> X86_64 ()
+ppushStr :: String -> X64 ()
 ppushStr s = do 
     mapM ppush $ map (I8 . ascii) s
     return ()
 
-ppushI32 :: (Integral a) => a -> X86_64 ()
+ppushI32 :: (Integral a) => a -> X64 ()
 ppushI32 n = do
     ppush $ I32 $ fromIntegral n
 
@@ -153,20 +163,20 @@ ppushI32 n = do
 -- This is used to define the built-in (basic) functions
 -- No type checking is performed on the body!
 defFunBasic :: String
-            -> X86_64 ()
-            -> X86_64 ()
+            -> X64 ()
+            -> X64 ()
 defFunBasic funName funBody = do
     -- envAddType funName funTy
-    asm $ setLabel funName
+    label funName
     funBody
-    asm $ setLabel (funName ++ "_return")
+    label (funName ++ "_return")
     ret
 
-callBody :: String -> X86_64 () 
-callBody l = callLabel l
+callBody = callLabel 
 
+{-
 writeMsgHelper msg = do
-    doc $ "Write message: " ++ msg
+    comment $ "Write message: " ++ msg
     ppush rax
     ppush rbx
     ppush rcx
@@ -182,5 +192,4 @@ writeMsgHelper msg = do
     ppop rcx
     ppop rbx
     ppop rax
-
-
+-}

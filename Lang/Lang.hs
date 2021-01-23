@@ -1,46 +1,54 @@
-{-# Language TypeSynonymInstances #-}
-{-# Language FlexibleInstances #-}
 module Lang.Lang where
 
+import X64.Datatypes
+import X64.X64
 import ASM.Datatypes
-import ASM.ASM
-
-import X86.Datatypes 
-import X86.X86
-
-import Lang.Linux
-import Lang.Debug
 import Lang.BasicFunctions
-import Lang.Parsing
-import Lang.EmitCode
+import Lang.Debug
 import Lang.Datatypes
+import Lang.Linux
+import Lang.Windows
 
-def :: String -> X86_64 ()
+-- The parameter stack is where functions read & write parameters
+pstackSizeBytes   = 0x10000
+dictBodySizeBytes = 0x10000
+
+def :: String -> X64 ()
 def defName = do
     doc $ "ASM Dictionary entry for " ++ defName
     doc "ASM or term sequence address in memory:"
     let hash = I64 $ fnv1 $ map ascii defName
-    doc "Backup the old r11"
-    mov rax r11
+    doc "Backup the old rDictIdx"
+    mov rax rDictIdx
 
     doc "Allocate a new record"
-    add r11 $ I32 24
+    add rDictIdx $ I32 24
     
     doc "Set values of the new record"
-    mov (derefOffset r11 0)  rax -- prev dict. entry
-    mov rax $ hash
-    mov (derefOffset r11 8)  rax -- hash
-    mov rax                 (L64 defName)
-    mov (derefOffset r11 16) rax  -- code address (by label ref.)
+    mov (derefOffset rDictIdx 0) rax -- prev dict. entry
+    mov rax hash
+    mov (derefOffset rDictIdx 8) rax -- hash
+    mov rax (L64 defName)
+    mov (derefOffset rDictIdx 16) rax -- code address (by label ref.)
 
-baseDefEntries = do
+populateDictionaryKernel = do
     doc "Populate the dictionary with some base functions from the assembly."
     doc "The dictionary is kept as a linked list rather than an array because "
     doc "there might be variable-length records in the future (e.g. the "
     doc "entry name ASCII representation)."
     doc "Simple Dictionary of cells [ prev ][ name ][ addr ]"
-    doc "See also: initDictionaryMemLinux "
+    doc "See also: setup"
+    doc "The functions exported here can be called in the repl."
+    doc "The exposed interface should allows the "
+    doc "definition of new parsers (so language extension) and the emission "
+    doc "of jit-code."
 
+    def "emit_w8"
+    def "emit_w64"
+    def "read_w8"
+    def "write_w8"
+
+    {-
     def "repl"
     def "dbg_dump_dictionary"
     def "dbg_dump_ptop_w8"
@@ -87,7 +95,10 @@ baseDefEntries = do
     def "term_hash"
     -- def "read_char_w8"
 
-baseDefBodies = do
+    -}
+
+baseDefBodies platform = do
+    {-
     defineCMPW64 "eq_w64"  je
     defineCMPW64 "lt_w64"  jl
     defineCMPW64 "gt_w64"  jg
@@ -113,8 +124,11 @@ baseDefBodies = do
     defineWrChrW64Linux
 
     Lang.Parsing.defineParsers
-    Lang.EmitCode.defineEmitFunctions
+    -}
+    defineEmitFunctions
+    defineIOFunctions platform
     
+    {-
     defineNewDef
     
     defineREPL
@@ -133,189 +147,102 @@ baseDefBodies = do
 
     defineNOT
     defineDEC
+    defineExit
+    -}
 
+    {-
     Lang.Debug.defineDbgDumpDictionary
+    -}
     Lang.Debug.defineDbgDumpPtop64
     Lang.Debug.defineDbgDumpPtop8
 
-    defineExit
 
-definePush1 = defFunBasic "push1" body where
-    body = do
-        ppush $ I32 1
+defineEmitFunctions = do
+    defineEmitW8
+    defineEmitW64
 
-defineDropW64 = defFunBasic "drop_w64" body where
-    body = pdrop 1
-
-defineDropW8 = defFunBasic "drop_w8" body where
-    body = pdropW8 1
-
-definePushK = defFunBasic "pushk" body where
-    body = do
-        ppush $ I32 75
-
-defineDUPW64 :: X86_64 () 
-defineDUPW64 = defFunBasic "dup_w64" body
+defineWrW8Windows = do
+    defFunBasic "write_w8" body
   where
     body = do
-        doc "Duplicate the top item on the stack."
-        ppeek rax
-        ppush rax
-        ret
-
-defineDUPW8 :: X86_64 () 
-defineDUPW8 = defFunBasic "dup_w8" body
-  where
-    body = do
-        doc "Duplicate the top item on the stack."
-        ppeek al
-        ppush al
-        ret
-
-
-defineDEC :: X86_64 ()
-defineDEC = defFunBasic "dec" body
-  where
-    body    = do
-        doc "Decrement the stack top."
-        ppop rax
-        dec rax
-        ppush rax
-
-defineNOT :: X86_64 ()
-defineNOT = defFunBasic funName body
-  where
-    funName = "not"
-    ty      = undefined
-    body    = do
-        doc "If the top of the stack is 0, replace with 1. "
-        doc "Otherwise replace with 0."
-        ppop rax
-        cmp rax $ I32 0
-        jeNear "NOT_PUSH_0"
-        ppush $ I32 1
-        ret
-        asm $ setLabel "NOT_PUSH_0"
-        ppush $ I32 0
-        ret
-
-defineTermHash :: X86_64 ()
-defineTermHash = defFunBasic "term_hash" body
-  where
-    body    = do
-        doc "Backup RBX, RAX, RCX since we'll be using them"
-        cpush rbx
-        cpush rax
-        cpush rcx
-        doc "Given a word on the stack, compute its hash. This helps to"
-        doc "compare words for equality when searching the dictionary."
-        doc "Trying out the (simple) FNV Hash function from Wikipedia"
-        doc "RBX holds the length to iterate."
-        doc "E.g. 'cba' has hash 15626587013303479755"
-
-        -- writeMsgHelper ":: hash length: "
-        -- callLabel "dbg_dump_ptop_w64"
-        
-        ppop rbx
-        doc "RAX holds the hash."
-        mov rax $ I64 fnvOffsetBasis
-
-        asm $ setLabel "TERM_HASH_WHILE"
-        do 
-            cmp rbx $ I32 0
-            jeNear "TERM_HASH_BREAK"
-            mov rcx (I64 fnvPrime)
-            mul rcx
-            xor rcx rcx -- Zeroing rcx is necessary
-
-            -- writeMsgHelper ":: hash char: "
-            -- callLabel "dbg_dump_ptop_w8"
-
-            ppopW8 cl
-            xor rax rcx
-            dec rbx
-            jmpLabel "TERM_HASH_WHILE"
-        asm $ setLabel "TERM_HASH_BREAK"
-
-        ppush rax
-
-        -- writeMsgHelper ":: final hash: "
-        -- callLabel "dbg_dump_ptop_w64"
     
-        doc "Restore RBX, RAX, RCX"
-        cpop rcx
-        cpop rax
-        cpop rbx
-        ret
+        comment "Writes on screen a single character from the pstack."
+        comment "Consumes the pstack w8."
+        comment "Pushes a w64 indicating success or failure."
 
--- Type :w64       -> :
--- Func :exit_code -> :
--- Exits the program with a specified exit code.
-defineExit :: X86_64 ()
-defineExit = defFunBasic "exit" body
-    where
-        body = do
-            ppop rbx
-            mov rax $ I64 1
-            int
+        comment "Uses the Windows function:"
+        comment "WriteFile (HANDLE hFile, LPCVOID lpBuffer, "
+        comment "  DWORD numBytesToWrite, LPDWORD lpNumBytesWritten, "
+        comment "  LPOVERLAPPED lpOverlapped)"
 
--- Type : -> :w64:w64
--- Func : -> :term_address:success_or_failure
-defineTermLook :: X86_64 ()
-defineTermLook = defFunBasic funName body
-  where
-    funName = "term_hash_look"
-    body    = do
-        doc "Lookup a term in the dictionary."
-        doc "Compute the term hash."
-        callLabel "term_hash"
-        doc "Traverse the dictionary using rax until we find"
-        doc "either the emtpy dictionary or the term."
-        doc ""
-        doc "rax now holds the hash we're looking for."
+        comment "Note: The Windows functions introduce a 16-bit alignment "
+        comment "requirement for the call stack. This means that all "
+        comment "other functions in the system need to conform to "
+        comment "this alignment requirement..."
 
-        callLabel "term_look"
+        comment "Set rax to the function pointer"
+        mov rax (L64 "WriteFile")
+        mov rax (deref rax)
 
-defineTermLookNohash :: X86_64 ()
-defineTermLookNohash = defFunBasic funName body
-  where
-    funName = "term_look"
-    body    = do
-        doc "Lookup a term hash in the dictionary."
-        doc "Use the hash given on the stack."
-        doc "Traverse the dictionary using rax until we find"
-        doc "either the emtpy dictionary or the term."
-        ppop rax 
-        doc "rax holds the hash we're looking for."
-        mov rbx r11 -- Begin from the dictionary top.
-        asm $ setLabel "TERM_LOOK_WHILE"
-        do
-            cmp rbx $ I32 0
-            jeNear "TERM_LOOK_NOT_FOUND"
+        comment "https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention"
 
-            doc "Take the current dictionary entry hash: def.hash"
-            mov rcx (derefOffset rbx 8)
-            cmp rcx rax
-            jeNear "TERM_LOOK_FOUND"
-            
-            doc "Advance the dictionary to the following item (def.prev)"
-            mov rbx (derefOffset rbx 0) 
+        comment "The MS x64 calling convention requires 32 bytes of shadow"
+        comment "space to spill registers rcx, rdx, r8 and r9:"
+        sub rsp (I32 0x20) 
 
-            jmpLabel "TERM_LOOK_WHILE"
-        asm $ setLabel "TERM_LOOK_FOUND"
-        doc "Found! Return the matching dictionary address"
-        ppush rbx 
-        ppush $ I32 1
-        ret
+        comment "Writing to stdout, place the HANDLE into rcx"
+        mov rcx (L64 "stdout")
+        mov rcx (deref rcx)
 
-        asm $ setLabel "TERM_LOOK_NOT_FOUND"
-        doc "Not found! indicate that there is an error."
-        ppush $ I32 0
-        -- ppush $ I32 0
-        ret
+        comment "Write to stdout from buffer: the parameter-stack top"
+        mov rdx rPstack
 
-defineWrCharW8Linux :: X86_64 ()
-defineWrCharW8Linux = defFunBasic "write_char_w8" body
+        comment "How many bytes to write: just 1"
+        mov r8 (I64 1)
+
+        comment "A pointer to write the number of bytes written"
+        mov r9 (L64 "io_result")
+        
+        comment "The fifth function parameter is passed through the stack"
+        comment "(cpush advances the stack by 8 bytes)"
+
+        comment "We use NULL (it's not an overlapped operation)"
+        mov rbx (I64 0)
+        cpush rbx -- Sub rsp 8
+
+        -- comment "We received a non-16-byte aligned stack and we must pass it on"
+        -- comment "16-byte aligned to the Windows function. So we add 8 bytes"
+        -- sub rsp (I32 0x08)
+
+        call rax
+
+        comment "Free the callstack of 40 bytes that were allocated above:"
+        -- add rsp (I32 0x30)
+        add rsp (I32 0x28)
+
+        comment "Drop the top of the stack, the character that we've just written."
+        pdropW8 1
+
+        comment "Return the result. If the function succeeds, the return value "
+        comment "is nonzero."
+
+        comment "TODO: When writing to a non-blocking, byte-mode pipe handle with "
+        comment "insufficient buffer space, WriteFile returns TRUE with "
+        comment "*lpNumberOfBytesWritten < nNumberOfBytesToWrite"
+
+        comment "Push the WriteFile result, 0 for failure and 1 for success"
+        {-
+        test  rax rax
+        xor   rax rax
+        setz  al
+        ppush rax
+        -}
+        ppush (I32 0x01)
+
+        return ()
+
+defineWrW8Linux :: X64 ()
+defineWrW8Linux = defFunBasic "write_w8" body
   where 
     body = do
         mov rdx $ I64 1 -- How many bytes to write?
@@ -328,234 +255,99 @@ defineWrCharW8Linux = defFunBasic "write_char_w8" body
                   -- we've just printed.
         ppush rax -- The putchar result, how many bytes we've written
 
--- http://man7.org/linux/man-pages/man2/write.2.html
--- Type :w64 -> :int
--- Func :chr -> :success
--- Side effect, prints buf on stdout.
-defineWrChrW64Linux :: X86_64 ()
-defineWrChrW64Linux = defFunBasic "write_char_w64" body
-  where 
-    body = do
-        mov rdx $ I64 1 -- How many bytes to write?
-        mov rax $ I64 $ fromIntegral linux_sys_write
-        mov rbx $ I64 $ fromIntegral linux_stdout 
-        -- read chars from the top of the params stack, i.e. from our buffer.
-        mov rcx rsi
-        int
-        pdrop 1   -- Drop the top of the stack which was the char
-                  -- we've just printed.
-        ppush rax -- The putchar result, how many bytes we've written
-
-
-
--- Type:      :w64:w64 -> w64
--- Operation: :a  :b   -> a (x) b
--- defineBinop :: String -> X86_64()
--- FIXME: Think about / introduce IMUL/IPLUS etc for signed/unsigned values!
--- We might need overflow checking also, i.e. return success or failure.
-defineBinop fn op
-    | fn == "plus" || fn == "minus" || fn == "and" =
-    defFunBasic fn body where
-        body = do
-            ppop rax
-            ppop rbx
-            op rax rbx
-            ppush rax -- Result
-defineBinop fn _ 
-    | fn == "times" = do
-    defFunBasic fn body where
-        body = do
-            ppop rax
-            ppop rbx
-            mul rbx  -- rax <- rax * rbx
-            ppush rax -- Result
-
-defineCMPW8 :: String -> (String -> X86_64()) -> X86_64 ()
-defineCMPW8 funName jmpCmpFun = defFunBasic funName funBody
-  where
-    funBody = do
-        xor rax rax
-        xor rbx rbx
-        ppop al
-        ppop bl
-        cmp  rax rbx -- test: rax (?) rbx
-        jmpCmpFun trueLabel -- if cmpFun holds, jump to trueLabel
-        ppush (I32 0)
-        ret
-        asm $ setLabel trueLabel
-        ppush (I32 1)
-        ret
-    trueLabel = funName ++ "_true"
-
-defineCMPW64 :: String -> (String -> X86_64()) -> X86_64 ()
-defineCMPW64 funName jmpCmpFun = defFunBasic funName funBody
-  where
-    funBody = do
-        ppop rax
-        ppop rbx
-        cmp rax rbx -- test: rax (?) rbx
-        jmpCmpFun trueLabel -- if cmpFun holds, jump to trueLabel
-        ppush (I32 0)
-        ret
-        asm $ setLabel trueLabel
-        ppush (I32 1)
-        ret
-    trueLabel = funName ++ "_true"
-
--- Type:      :w64:w64 -> :w64
--- Operation: :a  :b   -> :a<<b
-defineShiftLeft = defFunBasic fn body where
-    fn   = "shift_left"
-    body = do 
-        ppop rcx -- shift
-        ppop rax -- number
-        sal rax cl
-        ppush rax
-
--- Type:      :w64:w64 -> :w64
--- Operation: :a  :b   -> :a<<b
-defineShiftRight = defFunBasic fn body where
-    fn   = "shift_right"
-    body = do 
-        ppop rcx -- shift
-        ppop rax -- number
-        sar rax cl
-        ppush rax
-
--- Input: a string (length and chars). The string is consumed.
--- A new dictionary entry is created for that string.
-defineNewDef = defFunBasic "new_def" body where
-    body = do
-        doc "Build a [ prev ][ name hash ][ addr ] record on the stack"
-        doc "for a new dictionary definition."
-
-        doc "At this point the stack contains the term parsed by "
-        doc "parse_identifier. Hash it and save the hash in rax."
-
-        {-
-        writeMsgHelper "new def len:\n"
-        callLabel "dbg_dump_ptop_w64"
-        ppop rax
-        writeMsgHelper "new def letter:\n"
-        callLabel "dbg_dump_ptop_w8"
-        ppush rax
-        -}
-
-        callBody "term_hash"
-        -- writeMsgHelper "new term hash:\n"
-        -- callLabel "dbg_dump_ptop_w64"
-        ppop rax
-
-        doc "Backup the current r11 in rbx"
-        mov rbx r11
-        doc "Advance r11 to make space for the new record"
-        add r11 $ I32 24 
-        doc "save [prev] (the previous dictionary entry) from the backup"
-        mov (derefOffset r11 0)  rbx 
-        doc "save [name hash]"
-        mov (derefOffset r11 8)  rax 
-        doc "save [addr] the address of the definition body (the current r9)"
-        mov (derefOffset r11 16) r9  
-        doc "Done!"
-
-defineREPL :: X86_64 ()
-defineREPL = defFunBasic "repl" body
+defineRdW8Linux   = undefined
+defineRdW8Windows = do
+    defFunBasic "read_w8" body
   where
     body = do
-        doc "REPL"
-        asm $ setLabel "REPL_START"
+        comment "Read a single character from stdin and place it on the pstack."
+        comment "Uses the Windows kernel function: "
+        comment "BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, "
+        comment "   DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, "
+        comment "   LPOVERLAPPED lpOverlapped)"
 
-        doc "Await some input to be available"
-        callLabel "read_head_w8"
-        pdrop 1
+        comment "Note: The Windows functions introduce a 16-bit alignment "
+        comment "requirement for the call stack. This means that all "
+        comment "other functions in the system need to conform to "
+        comment "this alignment requirement..."
 
-        doc "Consume any whitespace and prepare the first character"
-        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
+        comment "Allocate a new char on the p-stack"
+        ppush (I8 0)
 
-        doc "Read a term using parse_identifier:"
-        -- TODO: Rename 'identifier' into 'term' in the parser!
-        callRequiredParser "parse_identifier" "REPL_ERR_UNKNOWN_INPUT"
+        comment "Set rax to the function pointer"
+        mov rax (L64 "ReadFile")
+        mov rax (deref rax)
 
-        doc "Hash the term we've read:"
+        comment "https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention"
+        comment "The MS x64 calling convention requires 32 bytes of shadow"
+        comment "space to spill registers rcx, rdx, r8 and r9:"
+        sub rsp (I32 0x20) 
 
-        callLabel "term_hash"
+        comment "HANDLE hFile: reading from stdin, place the HANDLE into rcx"
+        mov rcx (L64 "stdin")
+        mov rcx (deref rcx)
 
-        -- The first word is the operation we wish to make.
-        -- There are two operations for now, define and call.
-        doc "Switch to a different functionality"
-        doc "depending on the hash of the term we've just read:"
+        comment "Read from stdin into buffer: the just-allocated char, i.e. "
+        comment "the top of the stack"
+        mov rdx rPstack
 
-        ppop rax
-        mov rbx (I64 $ fnv1s "def")
-        cmp rax rbx
-        jeNear "REPL_DEF"
-        mov rbx (I64 $ fnv1s "run")
-        cmp rax rbx
-        jeNear "REPL_RUN"
-        mov rbx (I64 $ fnv1s "q")
-        cmp rax rbx
-        jeNear "REPL_QUIT"
+        comment "Number of bytes to read: just 1"
+        mov r8 (I64 1)
 
-        asm $ setLabel "REPL_ERR_UNKNOWN_INPUT"
-        writeMsgHelper "Unknown command! (expected: def/run/q)\n"
-        jmpLabel "REPL_START"
+        comment "A pointer to write the number of bytes read"
+        mov r9 (L64 "io_result")
 
-        -------------------------
-        -------------------------
-        asm $ setLabel "REPL_DEF"
+        comment "The fifth function parameter is passed through the stack"
+        comment "(cpush advances the stack by 8 bytes)"
+        mov rbx (I64 0)
+        cpush rbx 
 
-        doc "Consume any whitespace"
-        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
-        callRequiredParser "parse_def" "REPL_ERR_FAILED_DEF"
-
-        writeMsgHelper "OK, defined.\n"
-
-        doc "After the definition resume from the beginning."
-        jmpLabel "REPL_START" 
-                                    
-        -------------------------
-        -------------------------
-        asm $ setLabel "REPL_RUN"
-
-        doc "Consume any whitespace"
-        callOptionalParser "parse_wss" "REPL_ERR_UNKNOWN_INPUT"
-        callRequiredParser "parse_identifier" "REPL_ERR_NOT_A_TERM"
-
-        callLabel "term_hash_look"
-        -- Check for an unknown term (do nothing in that case).
-        ppop rax
-        cmp rax (I32 0)
-        jeNear "REPL_RUN_UNDEFINED"
-        
-        doc "Take the '.addr' field from the term found by term_hash_look"
-        ppop rax
-        mov rax (derefOffset rax 16)
-        
-        doc "Evaluate the found entry"
+        sub rsp (I32 0x08)
         call rax
 
-        writeMsgHelper "Run term done.\n"
-        jmpLabel "REPL_START"
+        comment "Free the callstack of 48 bytes that were allocated above:"
+        add rsp (I32 0x30)
 
-        asm $ setLabel "REPL_ERR_NOT_A_TERM"
-        writeMsgHelper "Not a valid term to run!\n"
-        jmpLabel "REPL_START"
+        comment "Return a success code. "
+        comment "Push the ReadFile result, 0 for failure and 1 for success"
 
-        asm $ setLabel "REPL_ERR_FAILED_DEF"
-        writeMsgHelper "Failed to parse definition!\n"
-        ppushContCharW8
-        writeMsgHelper "Unable to handle char: '"
-        callLabel "dbg_dump_ptop_w8"
-        writeMsgHelper "'\n"
-        ppopW8 al
-        jmpLabel "REPL_START"
+        test  rax rax
+        xor   rax rax
+        setz  al
+        ppush rax
 
 
-        asm $ setLabel "REPL_RUN_UNDEFINED"
-        assertPtop 0 "TERM_LOOK failed so the result should be 0."
-        pdrop 1 -- Drop the 0 From TERM_LOOK
-        writeMsgHelper "L.1158 Undefined term!\n"
-        jmpLabel "REPL_START"
+defineIOFunctions Linux   = 
+    defineRdW8Linux
+    defineWrW8Linux
+defineIOFunctions Windows = do
+    defineRdW8Windows 
+    defineWrW8Windows 
+            
+defineEmitW8 :: X64 ()
+defineEmitW8 = defFunBasic "emit_w8" body 
+  where
+    body = do
+        comment "Takes the w8 value from the top of the stack and emits it"
+        comment "in the JIT code generation area. Uses RAX"
+        -- cpush rax
+        -- xor rax rax
 
-        asm $ setLabel "REPL_QUIT"
+        -- writeMsgHelper ":: emit "
+        -- callLabel "dbg_dump_ptop_w8"
+
+        ppop al
+        mov (derefOffset rDefBodies 0) al
+        inc rDefBodies
+        -- cpop rax
  
+defineEmitW64 :: X64 ()
+defineEmitW64 = defFunBasic "emit_w64" body
+  where
+    body = do
+        -- writeMsgHelper ":: emit "
+        -- callLabel "dbg_dump_ptop_w64"
+        ppop rax
+        mov (derefOffset rDefBodies 0) rax
+        add rDefBodies (I32 8)
+

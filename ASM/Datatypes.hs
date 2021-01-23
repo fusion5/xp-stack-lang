@@ -1,113 +1,79 @@
 {-# Language TypeSynonymInstances #-}
 {-# Language FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# Language GeneralizedNewtypeDeriving #-}
 
 module ASM.Datatypes where
 
-import Data.Word
-import Data.Map as M
+import Data.ByteString.Lazy
 import Data.Sequence as S
-import Data.Foldable as F
+import Data.Map as M
 
 import Control.Monad.Except
 import Control.Monad.Trans.State
 
--- A construct that emits assembly bytes with label references of type lt
-data ASMEmit lt =
-      SWord8 Word8    -- A literal 8 bit char
-    | SProgLabel64 lt -- The 64 bit offset to a label from the program start
-    | SProgLabel32 lt -- The 32 bit offset to a label from the program start
-    | SRelOffsetToLabel32 -- A 32 bit offset to a label from just AFTER the ref.
-        Word64 -- Convenience copy of the current offset
-        lt     -- Target label
-    | SRelOffsetToLabel8 -- Same as SRelOffsetToLabel32 but 8 bits only.
-        Word64 -- Convenience copy of the current offset
-        lt     -- Target label
-    | SProgSize64 -- Program size, 64 bits
-    | SStrRef64   -- Reference by string to a string from the strings table
-        String
-    | SLabelDiff32 lt lt  -- The 32 bit offset from the first label to 
-                          -- the second label. (Refactoring note: this
-                          -- could supersede SProgLabel*)
-    | SLabelDiff16 lt lt  -- The 16 bit offset from the first label to 
-                          -- the second label. (Refactoring note: this
-                          -- could supersede SProgLabel*)
+import Data.Word
 
-    deriving (Eq, Show)
-
--- Assembly with labels and documentation, allows the sequencing of code and
--- labels and comments in any order
-data ASMCode =
-      ASMEmit   Word64           -- Offset convenience copy
-                [ASMEmit String] -- A sequence of bytes to emit
-    | ASMLabel  Word64           -- Offset convenience copy
-                String           -- A label
-    | ASMDoc    Word64           -- Offset convenience copy
-                String           -- Documentation
-    deriving (Eq, Show)
-
-{-
-emitHasLabel (SProgLabel64 l)          = Just l
-emitHasLabel (SProgLabel32 l)          = Just l
-emitHasLabel (SRelOffsetToLabel32 _ l) = Just l
-emitHasLabel (SRelOffsetToLabel8 _ l)  = Just l
-emitHasLabel _                         = Nothing
--}
-
-emitHasStrRef (SStrRef64 s) = Just s
-emitHasStrRef _ = Nothing
-
-{-
-lenBytesCode :: ASMCode -> Integer
-lenBytesCode (ASMEmit _ ws) = sum $ Prelude.map lenBytes ws
-lenBytesCode _ = 0
--}
-
-lenBytes :: ASMEmit String -> Integer
-lenBytes (SWord8 _) = 1 -- A single byte
-lenBytes (SProgLabel64 _) = 8
-lenBytes (SProgLabel32 _) = 4
-lenBytes (SRelOffsetToLabel32 _ _) = 4
-lenBytes (SRelOffsetToLabel8  _ _) = 1
-lenBytes (SProgSize64) = 8
-lenBytes (SStrRef64 _) = 8
-lenBytes (SLabelDiff32 _ _) = 4
-lenBytes (SLabelDiff16 _ _) = 2
-
-type ASM = StateT ASMState (Except String)
-
-class Documentation m where
-    doc :: String -> m ()
-
-class Labelable m where
-    setLabel :: String -> m ()
-
-data ASMState = ASMState
-    { asm_instr    :: S.Seq ASMCode -- Sequence of opcodes, labels and docs
---  , asm_bytes    :: S.Seq Word8   -- Resulting assembly code
-    , asm_offset   :: Word64  -- Current offset
-    , asm_uid      :: Integer -- Counter used to generate unique label names
-    , asm_strs     :: M.Map String Word64 -- String addresses
-    , asm_lbls     :: M.Map String Word64 -- Labeled addresses
-    , asm_ebuf     :: S.Seq (ASMEmit String) -- Opcode emit Buffer 
-    , asm_ebuf_off :: Word64
---    , asm_tyenv  :: M.Map String Type -- Type environment
-    } deriving (Eq, Show)
-
--- Initial assembler state.
-istate :: Word64
-       -> ASMState
-istate start = ASMState
-    { asm_instr  = S.empty
---  , asm_bytes  = S.empty
-    , asm_offset = start
-    , asm_lbls   = M.empty
-    , asm_uid    = 0
-    , asm_strs = M.empty
-    , asm_ebuf = S.empty
-    , asm_ebuf_off = 0 -- The offset at which buffering starts.
---    , _typeEnv = M.empty
+data ASMState t_addr = ASMState
+    { file_addr    :: t_addr -- Current offset in generated image file
+    , rva          :: t_addr -- Current offset from the image base address 
+                   -- in the memory-loaded data.
+                   -- This is needed because some output files 
+                   -- (e.g. portable executable, require to 
+                   -- tell the Windows loader where values will be 
+                   -- stored in memory and those also need to be aligned.
+                   -- Hence the need for offsets different from the 
+                   -- file point of view (bytes emitted so far).
+                   -- This is initially 0. It's often refered to as
+                   -- RVA (Relative Virtual Address) in Microsoft
+                   -- documentation.
+    , image_base   :: t_addr -- The in-memory image base location
+    , contents     :: S.Seq (ASMItem t_addr)
+                            -- Sequence of opcodes, labels and comments
+    , labels       :: M.Map String (t_addr, t_addr) -- value fst: file address; 
+                                                    -- value snd: rva
+    , uid          :: Integer -- unique label name generator counter
+    , zero         :: t_addr -- Dummy value, always 0 to have access to the t_addr type (Hack)
+    , resolved_asm :: ByteString -- Filled in the final step when all assembly is done
     }
 
--- bytes :: ASMState -> [Word8]
--- bytes = F.toList . asm_bytes
+type ASM t_addr = StateT (ASMState t_addr) (Except String)
+
+data ASMItem t_addr =
+        -- In general the first t_addr is the image file address and the 
+        -- second t_addr is the rva
+        ASMOpcode  t_addr t_addr (S.Seq (ASMBytes t_addr)) String -- nasm equiv.
+    |   ASMComment String
+    |   ASMLabel   t_addr t_addr String
+    |   ASMBytes   t_addr t_addr (S.Seq (ASMBytes t_addr))
+
+data Size       = Bytes1 | Bytes2 | Bytes4 | Bytes8
+data Endianness = LE | BE
+data Ref        = VA  -- Virtual Address (in-memory address)
+                | RVA -- Relative Virtual Address (in-memory address minus 
+                      -- image base address) 
+                | IA  -- Image Address (in-file address, offset from the 
+                      -- beginning of the file)
+
+data ASMBytes t_addr = 
+        -- Literal bytes:
+        BytesLiteral ByteString
+
+        -- Label address reference:
+    |   BytesLabelRef Ref Size Endianness String
+
+        -- The signed offset to a label from just after the reference:
+        -- This is used in relative jump instructions
+    |   BytesLabelRefOffset t_addr t_addr Ref Size Endianness String
+
+        -- The unsigned offset from the first label to the second one:
+        -- the first label must be <= than the second one and the delta
+        -- must fit the given Size (this is to be error-checked at 
+        -- run time):
+        -- It's used when defining the executable file headers.
+    |   BytesLabelDiff Ref Size Endianness String {- <= -} String
+
+class Commentable m where
+    comment :: String -> m ()
+
+class Labelable m where
+    label :: String -> m ()
