@@ -101,7 +101,12 @@ setup Linux = do
     add rDictIdx (I32 24)
 setup Windows = do
 
-    comment "Ensure a 16-bit call stack alignment"
+    comment "Ensure a 16-bit call stack alignment:"
+    comment "The stack needs to be 16-byte aligned before each call."
+    comment "In function bodies the stack begins as non-"
+    comment "aligned, having the 8-byte instruction pointer on top."
+    comment "Therefore, if the function calls other functions, it must"
+    comment "align the stack."
     sub rsp (I32 0x08)
 
     comment "The PE64 header contains labels to the start and end of the "
@@ -180,18 +185,6 @@ mainBody platform = do
 
     populateDictionaryKernel
     
-    comment "The stack needs to be 16-byte aligned before each call."
-    comment "In the main function this is always the case, but "
-    comment "in the body of other functions the stack begins as non-"
-    comment "aligned, having the 8-byte instruction pointer in it."
-
-    -- comment "Ensure 16-bit call stack alignment"
-    -- sub rsp (I32 0x08)
-
-    -- callLabel "read_w8"
-    -- ppush $ I32 1
-    -- callLabel "dbg_dump_ptop_w64"
-
     ppush (I8 0x32)
     callLabel "write_w8"
     callLabel "dbg_dump_ptop_w64"
