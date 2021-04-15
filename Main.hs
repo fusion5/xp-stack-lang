@@ -107,7 +107,7 @@ setup Windows = do
     comment "aligned, having the 8-byte instruction pointer on top."
     comment "Therefore, if the function calls other functions, it must"
     comment "align the stack."
-    sub rsp (I32 0x08)
+    -- sub rsp (I32 0x08)
 
     comment "The PE64 header contains labels to the start and end of the "
     comment "memory space that the Windows loader reserves for the process "
@@ -185,6 +185,7 @@ mainBody platform = do
 
     populateDictionaryKernel
     
+    {-
     ppush (I8 0x32)
     callLabel "write_w8"
     callLabel "dbg_dump_ptop_w64"
@@ -199,6 +200,37 @@ mainBody platform = do
     callLabel "write_w8"
     callLabel "dbg_dump_ptop_w64"
     pdrop 1
+    -}
+
+    ppush (I8 0x31)
+    callLabel "dbg_dump_ptop_w8"
+    callLabel "write_w8"
+    callLabel "dbg_dump_ptop_w64"
+    {-
+    -}
+    
+    ppush (I32 0x34)
+    callLabel "dbg_dump_ptop_w64"
+    callLabel "read_w8"
+    callLabel "dbg_dump_ptop_w64"
+    pdrop 1
+    callLabel "write_w8"
+
+    -- ppush (I8 0x34)
+    -- callLabel "write_w8"
+    -- ppush (I8 0x34)
+    -- callLabel "write_w8"
+    -- ppush (I32 0x01)
+    -- callLabel "dbg_dump_ptop_w64"
+    -- pdrop 1
+    -- ppush (I8 0x33)
+    -- callLabel "dbg_dump_ptop_w8"
+
+    -- callLabel "dbg_dump_ptop_w8"
+
+    -- callLabel "write_w8"
+    -- callLabel "dbg_dump_ptop_w64"
+    -- pdrop 1
 
     -- pdrop 1
     

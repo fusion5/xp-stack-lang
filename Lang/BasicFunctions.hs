@@ -16,6 +16,7 @@ import Control.Monad
 import Lang.Linux
 
 rPstack    = rsi
+rCallStack = rsp
 rDefBodies = r15
 rDictIdx   = r14
 
@@ -78,11 +79,11 @@ ppopW8 dst@(R8 reg) = ppop dst {- x86 $ do
 
 cpeerW8 :: Int32 -> Operand -> X64 ()
 cpeerW8 numW8s dst =
-    mov dst $ derefOffset rsp (fromIntegral numW8s)
+    mov dst $ derefOffset rCallStack (fromIntegral numW8s)
 
 cpeer :: Int32 -> Operand -> X64 ()
 cpeer numW64s dst = 
-    mov dst $ derefOffset rsp (fromIntegral $ numW64s * 8)
+    mov dst $ derefOffset rCallStack (fromIntegral $ numW64s * 8)
 
 ctop :: Operand -> X64 ()
 ctop = cpeer 0
@@ -90,16 +91,15 @@ ctop = cpeer 0
 cpop :: Operand -> X64 ()
 cpop dst64@(R64 _) = do
     comment $ "cpop " ++ show dst64
-    mov dst64 $ derefOffset rsp 0
-    add rsp $ I32 8
+    mov dst64 $ derefOffset rCallStack 0
+    add rCallStack $ I32 8
 cpop dst@(R8 _) = do
-    mov dst $ derefOffset rsp 0
-    add rsp $ I32 1
+    mov dst $ derefOffset rCallStack 0
+    add rCallStack $ I32 1
 
 cdrop :: Word8 -> X64()
-cdrop n = do
-    add rsp $ I32 (fromIntegral n)
-    
+cdrop numW8s = do
+    add rCallStack $ I32 (fromIntegral numW8s)
 
 
 -- Parameter push on the parameter stack (pstack), a different 
@@ -109,10 +109,12 @@ cdrop n = do
 -- void -> 8 bytes space of any type
 -- TODO: Consider the benefits of only supporting w64 on pstack and have 
 -- another stack for w8?
+-- FIXME: ppush rsi (a push of the parameter stack register itself) would not work!
 -- FIXME: Rather than RSI use RBP which isn't used anyway.
 ppush :: Operand -> X64 ()
 ppush v | supported v = do
     comment $ "ppush " ++ show v
+    -- or is it (- sz v)?
     sub rPstack $ I32 $ sz v
     mov (derefOffset rPstack 0) v
     where sz (I64 _)    = 8
@@ -132,8 +134,8 @@ ppush v = error $ "ppush doesn't support " ++ show v
 cpush :: Operand -> X64 ()
 cpush v | supported v = do
     comment $ "cpush " ++ show v
-    sub rsp $ I32 $ sz v
-    mov (derefOffset rsp 0) v
+    sub rCallStack $ I32 $ sz v
+    mov (derefOffset rCallStack 0) v
     where sz (I64 _)    = 8
           sz (R64 _)    = 8
           sz (RR64 _ _) = 8
@@ -159,6 +161,31 @@ ppushI32 :: (Integral a) => a -> X64 ()
 ppushI32 n = do
     ppush $ I32 $ fromIntegral n
 
+ppushAlignCallStack16bytes :: X64 ()
+ppushAlignCallStack16bytes = do
+    comment "Backup the current call stack pointer that will be restored"
+    ppush rCallStack
+
+    -- Perform the division by 16 bytes, i.e. 16*8 = 128 = 0x80
+    comment "This subtracts from the stack pointer until it's divisible by 128."
+    comment "The result is a 16-byte aligned rPstack."
+    comment "AND(rPstack, imm32 sign-extended to 64-bits):"
+    -- and_ rCallStack (I32 0xFFFFFF7F)
+    and_ rCallStack (I32 0xFFFFFF80)
+
+ppopRestoreCallStack :: X64 ()
+ppopRestoreCallStack = do
+    comment "Restore the previous call stack value"
+    ppop rCallStack
+ 
+cpush_x64_32ShadowBytes :: X64 ()
+cpush_x64_32ShadowBytes = do
+    sub rCallStack (I32 0x20) 
+
+cpop_x64_32ShadowBytes :: X64 ()
+cpop_x64_32ShadowBytes = do
+    add rCallStack (I32 0x20) 
+
 -- A function made up of assembly which has a type.
 -- This is used to define the built-in (basic) functions
 -- No type checking is performed on the body!
@@ -173,6 +200,8 @@ defFunBasic funName funBody = do
     ret
 
 callBody = callLabel 
+
+   
 
 {-
 writeMsgHelper msg = do

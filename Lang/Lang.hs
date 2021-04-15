@@ -186,10 +186,6 @@ defineWrW8Windows = do
 
         comment "https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention"
 
-        comment "The MS x64 calling convention requires 32 bytes of shadow"
-        comment "space to spill registers rcx, rdx, r8 and r9:"
-        sub rsp (I32 0x20) 
-
         comment "Writing to stdout, place the HANDLE into rcx"
         mov rcx (L64 "stdout")
         mov rcx (deref rcx)
@@ -210,17 +206,25 @@ defineWrW8Windows = do
         mov rbx (I64 0)
         cpush rbx -- Sub rsp 8
 
-        -- comment "We received a non-16-byte aligned stack and we must pass it on"
-        -- comment "16-byte aligned to the Windows function. So we add 8 bytes"
-        -- sub rsp (I32 0x08)
+        comment "Windows functions require 16-bit alignment "
+        comment "on the call stack."
+        ppushAlignCallStack16bytes
+
+        comment "The MS x64 calling convention requires 32 bytes of shadow"
+        comment "space to spill registers rcx, rdx, r8 and r9:"
+        cpush_x64_32ShadowBytes
 
         call rax
 
-        comment "Free the callstack of 40 bytes that were allocated above:"
-        -- add rsp (I32 0x30)
-        add rsp (I32 0x28)
+        comment "Restore the call stack from the saved value on the parameter "
+        comment "stack (it can become unaligned). We return to the call-stack state"
+        comment "at the ppushAlignCallStack16bytes point."
+        ppopRestoreCallStack
 
-        comment "Drop the top of the stack, the character that we've just written."
+        comment "Drop the fifth function parameter (8 bytes) that was pushed on the cstack"
+        cdrop 8
+
+        comment "Drop the top character from the stack - we've just written it."
         pdropW8 1
 
         comment "Return the result. If the function succeeds, the return value "
@@ -231,15 +235,13 @@ defineWrW8Windows = do
         comment "*lpNumberOfBytesWritten < nNumberOfBytesToWrite"
 
         comment "Push the WriteFile result, 0 for failure and 1 for success"
-        {-
+
         test  rax rax
         xor   rax rax
         setz  al
         ppush rax
-        -}
-        ppush (I32 0x01)
 
-        return ()
+
 
 defineWrW8Linux :: X64 ()
 defineWrW8Linux = defFunBasic "write_w8" body
@@ -260,34 +262,27 @@ defineRdW8Windows = do
     defFunBasic "read_w8" body
   where
     body = do
+
+        comment "Allocate a new char on the p-stack, the ReadFile output buffer"
+        comment "TODO: in the future this should be a buffer > 1 char, maybe"
+        comment "like a global variable allocated in .data"
+        ppush (I8 0)
+
         comment "Read a single character from stdin and place it on the pstack."
         comment "Uses the Windows kernel function: "
         comment "BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, "
         comment "   DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, "
         comment "   LPOVERLAPPED lpOverlapped)"
 
-        comment "Note: The Windows functions introduce a 16-bit alignment "
-        comment "requirement for the call stack. This means that all "
-        comment "other functions in the system need to conform to "
-        comment "this alignment requirement..."
-
-        comment "Allocate a new char on the p-stack"
-        ppush (I8 0)
-
         comment "Set rax to the function pointer"
         mov rax (L64 "ReadFile")
         mov rax (deref rax)
-
-        comment "https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention"
-        comment "The MS x64 calling convention requires 32 bytes of shadow"
-        comment "space to spill registers rcx, rdx, r8 and r9:"
-        sub rsp (I32 0x20) 
 
         comment "HANDLE hFile: reading from stdin, place the HANDLE into rcx"
         mov rcx (L64 "stdin")
         mov rcx (deref rcx)
 
-        comment "Read from stdin into buffer: the just-allocated char, i.e. "
+        comment "Read from stdin into buffer: the char allocated at the top, i.e. "
         comment "the top of the stack"
         mov rdx rPstack
 
@@ -297,16 +292,33 @@ defineRdW8Windows = do
         comment "A pointer to write the number of bytes read"
         mov r9 (L64 "io_result")
 
+
+        comment "The order here may seem unnatural/random but this is needed"
+        comment "because there are dependencies between registers!"
+
         comment "The fifth function parameter is passed through the stack"
         comment "(cpush advances the stack by 8 bytes)"
         mov rbx (I64 0)
-        cpush rbx 
+        cpush rbx
 
-        sub rsp (I32 0x08)
+        comment "Windows functions require 16-bit alignment "
+        comment "on the call stack."
+        ppushAlignCallStack16bytes
+
+        comment "https://en.wikipedia.org/wiki/X86_calling_conventions#Microsoft_x64_calling_convention"
+        comment "The MS x64 calling convention requires 32 bytes of shadow"
+        comment "space to spill registers rcx, rdx, r8 and r9:"
+        cpush_x64_32ShadowBytes
+
         call rax
 
-        comment "Free the callstack of 48 bytes that were allocated above:"
-        add rsp (I32 0x30)
+        comment "Restore the call stack from the saved value on the parameter "
+        comment "stack (it can become unaligned). We return to the call-stack state"
+        comment "at the ppushAlignCallStack16bytes point."
+        ppopRestoreCallStack
+
+        comment "Drop the fifth function parameter (8 bytes) that was pushed on the cstack"
+        cdrop 8
 
         comment "Return a success code. "
         comment "Push the ReadFile result, 0 for failure and 1 for success"
