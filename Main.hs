@@ -9,6 +9,7 @@ import ASM.ASM (compileASM)
 import X64.Datatypes
 import X64.X64
 import X64.PE64
+import X64.TestPlan
 
 import Lang.Datatypes
 import Lang.Linux
@@ -203,7 +204,24 @@ mainBody platform = do
     -}
 
     ppush (I8 0x31)
+    callLabel "write_w8"
+    ppush (I8 0x32)
+    callLabel "write_w8"
     callLabel "dbg_dump_ptop_w8"
+    callLabel "dbg_dump_ptop_w8"
+
+    {- cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    cpush (I8 0x00) -- Alignment modifier
+    -}
+    -- cdrop 8 -- Alignment modifier
+
     callLabel "write_w8"
     callLabel "dbg_dump_ptop_w64"
     {-
@@ -327,6 +345,16 @@ main = do
                         putStrLn $ "Error: " ++ err
                     Right finalState -> do
                         putStrLn $ ASM.Pretty.asmHex finalState
+        Just "x86_testplan_nasm"
+            -> do
+                putStr x64TestSuiteNASM
+        Just "x86_testrun"
+            -> do
+                case runASM_for_X64 (baseAddress Windows) (x64TestSuiteASM) of 
+                    Left err -> 
+                        putStrLn $ "Test ASM Error: " ++ err
+                    Right finalState -> do
+                        putStrLn $ unlines $ x64TestResults (ASM.Pretty.asmTestRun finalState)
         Nothing
             -> do 
                 case runASM_for_X64 (baseAddress Windows) (compiledASM Windows) of 

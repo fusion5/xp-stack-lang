@@ -14,7 +14,7 @@ import Data.Int
 import Control.Monad (replicateM)
 
 -- Provides simple instrumentation for testing hypotheses / predicates
--- in programs. Only to be used for debugging.
+-- in programs. Functions meant only to be used for debug purposes.
 
 doc = comment
 
@@ -90,7 +90,7 @@ assertCtop :: Integer -> String -> X64 ()
 assertCtop n msg = 
     assertGeneric n msg raxSet
   where
-    raxSet = mov rax $ rsp `derefOffset` 0 -- Peek the call stack top
+    raxSet = mov rax $ rCallStack `derefOffset` 0 -- Peek the call stack top
 
 {-
 assertPpop :: Integer -> String -> X64 ()
@@ -103,13 +103,13 @@ assertPtop :: Integer -> String -> X64 ()
 assertPtop n msg = 
     assertGeneric n msg raxSet
   where
-    raxSet = mov rax $ rsi `derefOffset` 0 -- Peek the param stack top
+    raxSet = mov rax $ rPstack `derefOffset` 0 -- Peek the param stack top
 
 assertPtopW8 :: Integer -> String -> X64 ()
 assertPtopW8 n msg = 
     assertGeneric n msg raxSet
   where
-    raxSet = mov al $ rsi `derefOffset` 0 -- Peek the param stack top
+    raxSet = mov al $ rPstack `derefOffset` 0 -- Peek the param stack top
 
 defineDbgDumpDictionary :: X64()
 defineDbgDumpDictionary = defFunBasic "dbg_dump_dictionary" body
@@ -152,7 +152,7 @@ defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_w64" body
   where
     body = do
         doc "Ensure 16-byte call stack alignment"
-        sub rsp (I32 0x08)
+        sub rCallStack (I32 0x08)
 
         doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the value at the top of the stack."
@@ -193,7 +193,6 @@ defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_w64" body
 
         label "DBG_DUMP_PTOP_64_END"
 
-
         doc "*** OUTPUT"
 
         doc "16 times write char. Conveniently, using the stack before "
@@ -214,9 +213,8 @@ defineDbgDumpPtop64 = defFunBasic "dbg_dump_ptop_w64" body
         cpop rcx
         cpop rbx
         cpop rax
-
         doc "Remove stack alignment padding"
-        add rsp (I32 0x08)
+        add rCallStack (I32 0x08)
 
 -- Type :w8  -> :w8
 -- Func :val -> :val
@@ -225,9 +223,8 @@ defineDbgDumpPtop8 :: X64 ()
 defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_w8" body
   where
     body = do
-
-        doc "Ensure the 16-byte call stack alignment"
-        sub rsp (I32 0x08)
+        -- doc "Test 16-byte call stack alignment"
+        -- sub rCallStack (I32 0x08)
 
         doc "Backup the registers used so as not to affect the caller"
         doc "rax holds the top of the stack."
@@ -275,7 +272,6 @@ defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_w8" body
         doc "printing reverses the "
         doc "order of the chars (which we need to do)."
 
-
         doc "*** OUTPUT"
 
         replicateM 2 $ do
@@ -287,12 +283,11 @@ defineDbgDumpPtop8 = defFunBasic "dbg_dump_ptop_w8" body
         callLabel "write_w8"
         pdrop 1
 
-
         doc "Restore all backup registers so as not to affect the caller"
         cpop rdx
         cpop rcx
         cpop rbx
         cpop rax
 
-        doc "Remove the call stack alignment padding"
-        add rsp (I32 0x08)
+        -- doc "Test stack alignment padding"
+        -- add rCallStack (I32 0x08)

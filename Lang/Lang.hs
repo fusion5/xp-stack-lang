@@ -175,9 +175,9 @@ defineWrW8Windows = do
         comment "  DWORD numBytesToWrite, LPDWORD lpNumBytesWritten, "
         comment "  LPOVERLAPPED lpOverlapped)"
 
-        comment "Note: The Windows functions introduce a 16-bit alignment "
-        comment "requirement for the call stack. This means that all "
-        comment "other functions in the system need to conform to "
+        comment "Note: Windows functions require 16-bit call stack alignment. "
+        comment "This means that all "
+        comment "other functions in the system should conform to "
         comment "this alignment requirement..."
 
         comment "Set rax to the function pointer"
@@ -199,21 +199,22 @@ defineWrW8Windows = do
         comment "A pointer to write the number of bytes written"
         mov r9 (L64 "io_result")
         
-        comment "The fifth function parameter is passed through the stack"
-        comment "(cpush advances the stack by 8 bytes)"
-
-        comment "We use NULL (it's not an overlapped operation)"
-        mov rbx (I64 0)
-        cpush rbx -- Sub rsp 8
-
         comment "Windows functions require 16-bit alignment "
         comment "on the call stack."
         ppushAlignCallStack16bytes
+
+        comment "We use NULL (it's not an overlapped operation)"
+        mov rbx (I64 0)
+
+        comment "The fifth function parameter is passed through the stack"
+        comment "(cpush advances the stack by 8 bytes)"
+        cpush rbx -- Sub rsp 8
 
         comment "The MS x64 calling convention requires 32 bytes of shadow"
         comment "space to spill registers rcx, rdx, r8 and r9:"
         cpush_x64_32ShadowBytes
 
+        comment "Does this alter rsi? (Yes, it seems that writeFile does)"
         call rax
 
         comment "Restore the call stack from the saved value on the parameter "
@@ -221,8 +222,8 @@ defineWrW8Windows = do
         comment "at the ppushAlignCallStack16bytes point."
         ppopRestoreCallStack
 
-        comment "Drop the fifth function parameter (8 bytes) that was pushed on the cstack"
-        cdrop 8
+        -- comment "Drop the fifth function parameter (8 bytes) that was pushed on the cstack"
+        -- cdrop 8
 
         comment "Drop the top character from the stack - we've just written it."
         pdropW8 1
@@ -251,7 +252,7 @@ defineWrW8Linux = defFunBasic "write_w8" body
         mov rax $ I64 $ fromIntegral linux_sys_write
         mov rbx $ I64 $ fromIntegral linux_stdout 
         -- read chars from the top of the params stack, i.e. from our buffer.
-        mov rcx rsi
+        mov rcx rPstack
         int
         pdropW8 1 -- Drop the top of the stack which was the char
                   -- we've just printed.

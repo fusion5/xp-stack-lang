@@ -15,7 +15,7 @@ import Control.Monad
 
 import Lang.Linux
 
-rPstack    = rsi
+rPstack    = r13 -- rsi
 rCallStack = rsp
 rDefBodies = r15
 rDictIdx   = r14
@@ -54,7 +54,7 @@ ppop dst64@(R64 _) = do
     comment $ "ppop " ++ show dst64
     mov dst64 $ derefOffset rPstack 0
     add rPstack $ I32 8
-ppop dst@(R8 _) = do
+ppop dst@(RL8 _) = do
     mov dst $ derefOffset rPstack 0
     add rPstack $ I32 1
 
@@ -65,7 +65,7 @@ ppeer numW64s dst =
     mov dst $ derefOffset rPstack (fromIntegral $ numW64s * 8)
 
 ppeerW8 :: Int32 -> Operand -> X64 ()
-ppeerW8 numW8s dst@(R8 r)  =
+ppeerW8 numW8s dst@(RL8 r)  =
     mov dst $ derefOffset rPstack (fromIntegral numW8s)
 ppeerW8 _ _ = error "ppeerW8 requires an 8-bit register as parameter"
 
@@ -73,7 +73,7 @@ ptopW8 :: Operand -> X64 ()
 ptopW8 = ppeerW8 0
 
 ppopW8 :: Operand -> X64 ()
-ppopW8 dst@(R8 reg) = ppop dst {- x86 $ do
+ppopW8 dst@(RL8 reg) = ppop dst {- x86 $ do
     mov dst $ derefOffset rPstack 0
     add rPstack $ I32 1 -}
 
@@ -93,7 +93,7 @@ cpop dst64@(R64 _) = do
     comment $ "cpop " ++ show dst64
     mov dst64 $ derefOffset rCallStack 0
     add rCallStack $ I32 8
-cpop dst@(R8 _) = do
+cpop dst@(RL8 _) = do
     mov dst $ derefOffset rCallStack 0
     add rCallStack $ I32 1
 
@@ -109,8 +109,7 @@ cdrop numW8s = do
 -- void -> 8 bytes space of any type
 -- TODO: Consider the benefits of only supporting w64 on pstack and have 
 -- another stack for w8?
--- FIXME: ppush rsi (a push of the parameter stack register itself) would not work!
--- FIXME: Rather than RSI use RBP which isn't used anyway.
+-- FIXME: ppush rPstack (a push of the parameter stack register itself) would not work!
 ppush :: Operand -> X64 ()
 ppush v | supported v = do
     comment $ "ppush " ++ show v
@@ -123,9 +122,9 @@ ppush v | supported v = do
           sz (L64 _)    = 8
           sz (I32 _)    = 8
           sz (I8 _)     = 1
-          sz (R8 _)     = 1
+          sz (RL8 _)    = 1
           supported (I8 _) = True
-          supported (R8 _) = True
+          supported (RL8 _) = True
           supported (I32 _) = True
           supported (R64 _) = True
           supported _ = False
@@ -142,9 +141,9 @@ cpush v | supported v = do
           sz (L64 _)    = 8
           sz (I32 _)    = 8
           sz (I8 _)     = 1
-          sz (R8 _)     = 1
-          supported (I8 _) = True
-          supported (R8 _) = True
+          sz (RL8 _)    = 1
+          supported (I8  _) = True
+          supported (RL8 _) = True
           supported (I32 _) = True
           supported (R64 _) = True
           supported _ = False
@@ -163,7 +162,7 @@ ppushI32 n = do
 
 ppushAlignCallStack16bytes :: X64 ()
 ppushAlignCallStack16bytes = do
-    comment "Backup the current call stack pointer that will be restored"
+    comment "Backup the current call stack pointer to the p-stack"
     ppush rCallStack
 
     -- Perform the division by 16 bytes, i.e. 16*8 = 128 = 0x80
@@ -175,7 +174,7 @@ ppushAlignCallStack16bytes = do
 
 ppopRestoreCallStack :: X64 ()
 ppopRestoreCallStack = do
-    comment "Restore the previous call stack value"
+    comment "Restore the previous call stack value from the p-stack"
     ppop rCallStack
  
 cpush_x64_32ShadowBytes :: X64 ()

@@ -19,17 +19,30 @@ legend =
 --    ++ "{Rel8/32 label} means a relative reference to a label (offset)\n"
     ++ "{label1 - label2} means a delta of label addresses\n"
 
+-- Produces a sequence of ByteStrings that we must check against the expected
+-- ByteStrings
+asmTestRun :: (PrintfArg t_addr) => ASMState t_addr -> [BS.ByteString]
+asmTestRun state = 
+    toList $ map asmTestItem $ toList $ contents state
+  where
+    asmTestItem :: (PrintfArg t_addr) => ASMItem t_addr -> BS.ByteString
+    asmTestItem (ASMOpcode fileAddr virtAddr bytes opcode) = 
+        BS.concat $ map asmOpcodeBytes $ toList bytes
+    asmTestItem _ = BS.empty
+    asmOpcodeBytes (BytesLiteral bs) = bs
+    asmOpcodeBytes _ = BS.empty
+
 asmHex :: (PrintfArg t_addr) => ASMState t_addr -> String
 asmHex state = 
     intercalate "\n" $ map asmHexItem $ toList $ contents state
-
-asmHexItem :: (PrintfArg t_addr) => ASMItem t_addr -> String
-asmHexItem (ASMOpcode fileAddr virtAddr bytes opcode) =
-    printf "%08X %08X %s (%s)" fileAddr virtAddr (concat $ map asmHexBytes $ toList bytes) opcode
-asmHexItem (ASMBytes fileAddr virtAddr bytes) =
-    printf "%08X %08X %s" fileAddr virtAddr (concat $ map asmHexBytes $ toList bytes)
-asmHexItem (ASMLabel fileAddr virtAddr label) = label ++ ":"
-asmHexItem (ASMComment comment) = (take 16 (repeat ' ')) ++ "# " ++ comment
+  where
+    asmHexItem :: (PrintfArg t_addr) => ASMItem t_addr -> String
+    asmHexItem (ASMOpcode fileAddr virtAddr bytes opcode) =
+        printf "%08X %08X %s (%s)" fileAddr virtAddr (concat $ map asmHexBytes $ toList bytes) opcode
+    asmHexItem (ASMBytes fileAddr virtAddr bytes) =
+        printf "%08X %08X %s" fileAddr virtAddr (concat $ map asmHexBytes $ toList bytes)
+    asmHexItem (ASMLabel fileAddr virtAddr label) = label ++ ":"
+    asmHexItem (ASMComment comment) = (take 16 (repeat ' ')) ++ "# " ++ comment
 
 chunks n = takeWhile (not . null) . unfoldr (Just . splitAt n)
 
@@ -77,7 +90,7 @@ hexString i = [h,l] where (h,l) = hexBytes i
 
 -- | Dump a list of word8 into a raw string of hex value
 dumpRaw :: [Word8] -> String
-dumpRaw = concatMap hexString
+dumpRaw ws = intercalate " " $ map hexString ws
 
 dumpByteString :: BS.ByteString -> String
 dumpByteString = dumpRaw . BS.unpack
