@@ -10,6 +10,9 @@ module Runtime.X64.BasicOps (
 , cpop  -- ^Call stack pop
 , cpush -- ^Call stack push
 , cdrop -- ^Call stack drop
+, ctop
+, cpeer
+, cpeerW8
 , defFunBasic
 , rPstack
 , rCallStack
@@ -18,13 +21,12 @@ module Runtime.X64.BasicOps (
 , defineEmitW8
 , defineEmitW64
 , populateDictionaryKernel
+, fnv1Hex
+, fnv1Integral
 )
-
 where
 
-import qualified ASM.ASM   as ASM
 import qualified ASM.Types as ASM
-import qualified Control.Monad as Monad
 import qualified Data.Bits as B
 import qualified Data.Int  as Int
 import qualified Data.Word as Word
@@ -32,14 +34,16 @@ import qualified Text.Printf as Printf
 import qualified X64.Types as X64
 import qualified X64.X64   as X64
 
+rPstack, rCallStack, rDefBodies, rDictIdx :: X64.Operand
 rPstack    = X64.r13
 rCallStack = X64.rsp
 rDefBodies = X64.r15
 rDictIdx   = X64.r14
 
 -- String hash parameters
-fnvOffsetBasis = 0xCBF29CE484222325
+fnvPrime, fnvOffsetBasis :: Word.Word64
 fnvPrime       = 0x100000001B3
+fnvOffsetBasis = 0xCBF29CE484222325
 
 fnvFold :: Bool -> Word.Word8 -> Word.Word64 -> Word.Word64
 fnvFold False x h = (fnvPrime * h) `B.xor` fromIntegral x
@@ -52,8 +56,10 @@ fnv1 = foldr (fnvFold False) fnvOffsetBasis
 fnv1s :: String -> Word.Word64
 fnv1s = fnv1 . map X64.ascii
 
+fnv1Integral :: String -> Word.Word64
 fnv1Integral = fromIntegral . fnv1s
 
+fnv1Hex :: Printf.PrintfType t => String -> t
 fnv1Hex s = Printf.printf "%08X\n" $ fnv1s s
 
 -- Parameter stack drop, alters the parameter stack register rPstack
@@ -74,7 +80,9 @@ ppop dst64@(X64.R64 _) = do
 ppop dst@(X64.RL8 _) = do
     X64.mov dst $ X64.derefOffset rPstack 0
     X64.add rPstack $ X64.I32 1
+ppop _ = error "ppop requires a register operand"
 
+ppeek :: X64.Operand -> X64.X64 ()
 ppeek = ppeer 0
 
 ppeer :: Int.Int32 -> X64.Operand -> X64.X64 ()
@@ -82,7 +90,7 @@ ppeer numW64s dst =
     X64.mov dst $ X64.derefOffset rPstack (fromIntegral $ numW64s * 8)
 
 ppeerW8 :: Int.Int32 -> X64.Operand -> X64.X64 ()
-ppeerW8 numW8s dst@(X64.RL8 r)  =
+ppeerW8 numW8s dst@(X64.RL8 _)  =
     X64.mov dst $ X64.derefOffset rPstack (fromIntegral numW8s)
 ppeerW8 _ _ = error "ppeerW8 requires an 8-bit register as parameter"
 
@@ -93,6 +101,7 @@ ppopW8 :: X64.Operand -> X64.X64 ()
 ppopW8 dst@(X64.RL8 _) = ppop dst {- x86 $ do
     mov dst $ derefOffset rPstack 0
     add rPstack $ I32 1 -}
+ppopW8 _ = error "ppopW8 requires an 8-bit operand"
 
 cpeerW8 :: Int.Int32 -> X64.Operand -> X64.X64 ()
 cpeerW8 numW8s dst =
@@ -171,13 +180,17 @@ cpush v = error $ "cpush doesn't support operand " ++ show v ++
             " (only registers are supported)"
 
 -- Push a string on the stack
+{-
 ppushStr :: String -> X64.X64 ()
 ppushStr s = do
     mapM_ ppush $ map (X64.I8 . X64.ascii) s
+-}
 
+{-
 ppushI32 :: (Integral a) => a -> X64.X64 ()
 ppushI32 n =
     ppush $ X64.I32 $ fromIntegral n
+-}
 
 ppopRestoreCallStack :: X64.X64 ()
 ppopRestoreCallStack = do

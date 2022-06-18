@@ -35,7 +35,7 @@ main = do
   args <- Env.getArgs
   case Maybe.listToMaybe args of
     Just "bootstrap_x86_windows_doc" -> do
-      case X64.runASM_for_X64 0x400000 windowsAssembly of
+      case X64.runASM_for_X64 baseAddressWindows windowsAssembly of
         Left err ->
           putStrLn $ "Error: " ++ err
         Right finalState -> do
@@ -43,13 +43,13 @@ main = do
     Just "x86_testplan_nasm" -> do
       putStr TestUtils.x64TestSuiteNASM
     Just "x86_testrun" -> do
-      case X64.runASM_for_X64 0x400000 (TestUtils.x64TestSuiteASM) of
+      case X64.runASM_for_X64 baseAddressWindows (TestUtils.x64TestSuiteASM) of
         Left err ->
           putStrLn $ "Test ASM Error: " ++ err
         Right finalState -> do
           putStrLn $ unlines $ TestUtils.x64TestResults (ASM.asmTestRun finalState)
     Nothing -> do
-      case X64.runASM_for_X64 0x400000 windowsAssembly of
+      case X64.runASM_for_X64 baseAddressWindows windowsAssembly of
         Left err ->
           putStrLn $ "Error: " ++ err
         Right finalState -> do

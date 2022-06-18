@@ -28,6 +28,7 @@ x64TestArray = [
                                        , [0x48,0xBB,0x2A,0x00,0x00,0x00,0x00,0x00,0x00,0x00])
   , (mov  rsp rcx                      , "mov rsp, rcx"
                                        , [0x48,0x89,0xCC])
+
   , (xor  rbx rbx                      , "xor rbx, rbx"
                                        , [0x48,0x31,0xDB])
   , (xor  rax rbx                      , "xor rax, rbx"
