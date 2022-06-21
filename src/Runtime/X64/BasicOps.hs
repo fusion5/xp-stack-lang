@@ -1,44 +1,65 @@
 module Runtime.X64.BasicOps (
   ppop
-, ppopW8
-, ppopRestoreCallStack
-, pdropW64
-, pdropW8
-, ppush  -- ^Parameter stack push
-, ptopW8 -- ^Parameter stack top
-, ppeek
-, cpop  -- ^Call stack pop
-, cpush -- ^Call stack push
 , cdrop -- ^Call stack drop
-, ctop
 , cpeer
 , cpeerW8
+, cpop  -- ^Call stack pop
+, cpush -- ^Call stack push
+, ctop
 , defFunBasic
-, rPstack
+, defineEmitW64
+, defineEmitW8
+, fnv1Hex
+, fnv1Integral
+, fnv1s
+, pdropW64
+, pdropW8
+, populateDictionaryKernel
+, ppeek
+, ppopRestoreCallStack
+, ppopW8
+, ppush  -- ^Parameter stack push
+, ppushContCharW8
+, ptopW8 -- ^Parameter stack top
 , rCallStack
 , rDefBodies
 , rDictIdx
-, defineEmitW8
-, defineEmitW64
-, populateDictionaryKernel
-, fnv1Hex
-, fnv1Integral
+, rPstack
+, withRegisters
 )
 where
 
-import qualified ASM.Types as ASM
-import qualified Data.Bits as B
-import qualified Data.Int  as Int
-import qualified Data.Word as Word
-import qualified Text.Printf as Printf
-import qualified X64.Types as X64
-import qualified X64.X64   as X64
+import qualified ASM.Types        as ASM
+import qualified Data.Bits        as B
+import qualified Data.Int         as Int
+import qualified Data.Word        as Word
+import qualified Text.Printf      as Printf
+import qualified X64.Types        as X64
+import qualified X64.X64          as X64
 
-rPstack, rCallStack, rDefBodies, rDictIdx :: X64.Operand
+
+rPstack, rCallStack, rDefBodies,
+  rDictIdx, rContChar :: X64.Operand
 rPstack    = X64.r13
 rCallStack = X64.rsp
 rDefBodies = X64.r15
 rDictIdx   = X64.r14
+rContChar  = X64.r12
+
+
+withRegisters :: [X64.Operand] -> X64.X64 () -> X64.X64 ()
+withRegisters rs act = do
+  ASM.comment "Backup the registers used by this code to the call stack so as not to affect the caller"
+  mapM_ cpush rs
+  act
+  ASM.comment "Restore the backed up registers used by this code from the call stack in reverse order"
+  mapM_ cpop (reverse rs)
+
+
+ppushContCharW8 = withRegisters [X64.rax] $ do
+  X64.mov X64.rax rContChar
+  ppush X64.al
+
 
 -- String hash parameters
 fnvPrime, fnvOffsetBasis :: Word.Word64

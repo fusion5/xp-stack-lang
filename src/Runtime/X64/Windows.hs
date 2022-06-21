@@ -3,6 +3,7 @@ module Runtime.X64.Windows where
 import qualified ASM.Types              as ASM
 import qualified Runtime.X64.Debug      as Debug
 import qualified Runtime.X64.BasicOps   as X64.Ops
+import qualified Runtime.X64.REPL       as REPL
 import qualified X64.Types              as X64
 import qualified X64.X64                as X64
 import qualified Data.Word              as Word
@@ -240,6 +241,7 @@ mainBody = do
     X64.Ops.defineEmitW64
     defineRdW8Windows
     defineWrW8Windows
+    REPL.defineREPL
 
 
 defineRdW8Windows :: X64.X64 ()

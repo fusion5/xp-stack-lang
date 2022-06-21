@@ -13,6 +13,13 @@ import qualified Data.Word            as Word
 import qualified X64.Types            as X64
 import qualified X64.X64              as X64
 
+
+spec :: Spec
+spec = do
+  spec_00050
+  spec_00100
+
+
 encode :: X64.X64 () -> [Word.Word8]
 encode act =
   case X64.runASM_for_X64 0x400000 (X64.runX64 act >> ASM.compileASM) of
@@ -332,171 +339,243 @@ spec_00100 = do
   it "mov bl, [rbx]" $
     encode (mov bl (derefOffset rbx 0))
       `shouldBe` [0x8A,0x1B]
-
-{-
-  , (xor  rbx rbx                      , "xor rbx, rbx"
-                                       , [0x48,0x31,0xDB])
-  , (xor  rax rbx                      , "xor rax, rbx"
-                                       , [0x48,0x31,0xD8])
-  , (xor  rbx rax                      , "xor rbx, rax"
-                                       , [0x48,0x31,0xC3])
-  , (xor  rbx r12                      , "xor rbx, r12"
-                                       , [0x4C,0x31,0xE3])
-  , (xor  r12 rax                      , "xor r12, rax"
-                                       , [0x49,0x31,0xC4])
-  , (push (I32 0x33221100)             , "push 0x33221100"
-                                       , [0x68,0x00,0x11,0x22,0x33])
-  , (inc  rdx                          , "inc rdx"
-                                       , [0x48,0xFF,0xC2])
-  , (inc  rax                          , "inc rax"
-                                       , [0x48,0xFF,0xC0])
-  , (inc  r9                           , "inc r9"
-                                       , [0x49,0xFF,0xC1])
-  , (test rax rax                      , "test rax, rax"
-                                       , [0x48,0x85,0xC0])
-  , (test rbx rdx                      , "test rbx, rdx"
-                                       , [0x48,0x85,0xD3])
-  , (test r9 rdx                       , "test r9,  rdx"
-                                       , [0x49,0x85,0xD1])
-  , (pop  rbx                          , "pop rbx"
-                                       , [0x5B])
-  , (pop  r9                           , "pop r9"
-                                       , [0x41,0x59])
-  , (ret                               , "ret"
-                                       , [0xC3])
-  , (call rbx                          , "call rbx"
-                                       , [0xFF,0xD3])
-  , (call rax                          , "call rax"
-                                       , [0xFF,0xD0])
-  , (call r9                           , "call r9"
-                                       , [0x41,0xFF,0xD1])
-  , (add  rbx rdx                      , "add rbx, rdx"
-                                       , [0x48,0x01,0xD3])
-  , (add  rbx r9                       , "add rbx, r9"
-                                       , [0x4C,0x01,0xCB])
-  , (add  r9 rbx                       , "add r9, rbx"
-                                       , [0x49,0x01,0xD9])
-  , (add  r9 r9                        , "add r9, r9"
-                                       , [0x4D,0x01,0xC9])
-  , (push rbp                          , "push rbp"
-                                       , [0x55])
-  , (push rax                               , "push rax"
-                                            , [0x50])
-  , (push r12                               , "push r12"
-                                            , [0x41,0x54])
-  , (sub rdx (I32 0x33221100)               , "sub rdx, 0x33221100"
-                                            , [0x48,0x81,0xEA,0x00,0x11,0x22,0x33])
-  , (add rdx (I32 0x33221100)               , "add rdx, 0x33221100"
-                                            , [0x48,0x81,0xC2,0x00,0x11,0x22,0x33])
-  , (add r8  (I32 0x33221100)               , "add r8,  0x33221100"
-                                            , [0x49,0x81,0xC0,0x00,0x11,0x22,0x33])
-  , (add rdx (rbp `derefOffset` 0)          , "add rdx, [rbp]"
-                                            , [0x48,0x03,0x55,0x00])
-  , (add rdx (rbp `derefOffset` (-128))     , "add rdx, [rbp - 128]"
-                                            , [0x48,0x03,0x55,0x80])
-  , (add rdx (rbp `derefOffset` 127)        , "add rdx, [rbp + 127]"
-                                            , [0x48,0x03,0x55,0x7F])
-  , (sub rdx (rbp `derefOffset` 0)          , "sub rdx, [rbp]"
-                                            , [0x48,0x2B,0x55,0x00])
-  , (sub rdx (rbp `derefOffset` (-128))     , "sub rdx, [rbp - 128]"
-                                            , [0x48,0x2B,0x55,0x80])
-  , (sub rdx (rbp `derefOffset` 127)        , "sub rdx, [rbp + 127]"
-                                            , [0x48,0x2B,0x55,0x7F])
-  , (sub rdx rbx                            , "sub rdx, rbx"
-                                            , [0x48,0x29,0xDA])
-  , (jmpPtrOffset8  rbp 0                   , "jmp [rbp]"
-                                            , [0xFF,0x65,0x00])
-  , (jmpPtrOffset8  rdi 1                   , "jmp [rdi + 1]"
-                                            , [0xFF,0x67,0x01])
-  , (jmpPtrOffset8  r11 1                   , "jmp [r11 + 1]"
-                                            , [0x41,0xFF,0x63,0x01])
-  , (mov (rdi `derefOffset` (-128)) rdx     , "mov [rdi - 128], rdx"
-                                            , [0x48,0x89,0x57,0x80])
-  , (mov (rdi `derefOffset` (-25600)) rdx   , "mov [rdi - 25600], rdx"
-                                            , [0x48,0x89,0x97,0x00,0x9C,0xFF,0xFF])
-  , (cmp rbx (I32 0x33221100)               , "cmp rbx, 0x33221100"
-                                            , [0x48,0x81,0xFB,0x00,0x11,0x22,0x33])
-  , (cmp rbx rdx                            , "cmp rbx, rdx"
-                                            , [0x48,0x39,0xD3])
-  , (cmp rax (I32 0)                        , "cmp rax, 0"
-                                            , [0x48,0x3D,0x00,0x00,0x00,0x00])
-  , (mul rbx                                , "mul rbx"
-                                            , [0x48,0xF7,0xE3])
-  , (mul rax                                , "mul rax"
-                                            , [0x48,0xF7,0xE0])
-  , (mul r11                                , "mul r11"
-                                            , [0x49,0xF7,0xE3])
-  , (sub rax (I32 1)                        , "sub rax, 1"
-                                            , [0x48,0x2D,0x01,0x00,0x00,0x00])
-  , (add rax (I32 1)                        , "add rax, 1"
-                                            , [0x48,0x05,0x01,0x00,0x00,0x00])
-  , (jmp rax                                , "jmp rax"
-                                            , [0xFF,0xE0])
-  , (jmp rbx                                , "jmp rbx"
-                                            , [0xFF,0xE3])
-  , (jmp r10                                , "jmp r10"
-                                            , [0x41,0xFF,0xE2])
-
-  , (sal rax (I8 1)                         , "sal rax, 1"
-                                            , [0x48,0xD1,0xE0])
-  , (sal rbx (I8 1)                         , "sal rbx, 1"
-                                            , [0x48,0xD1,0xE3])
-  , (sal rbx (I8 2)                         , "sal rbx, 2"
-                                            , [0x48,0xC1,0xE3,0x02])
-  , (sal rbx cl                             , "sal rbx, cl"
-                                            , [0x48,0xD3,0xE3])
-  , (sal rdx cl                             , "sal rdx, cl"
-                                            , [0x48,0xD3,0xE2])
-  , (sar rax (I8 1)                         , "sar rax, 1"
-                                            , [0x48,0xD1,0xF8])
-  , (sar rbx (I8 1)                         , "sar rbx, 1"
-                                            , [0x48,0xD1,0xFB])
-  , (sar rbx (I8 2)                         , "sar rbx, 2"
-                                            , [0x48,0xC1,0xFB,02])
-  , (sar rbx cl                             , "sar rbx, cl"
-                                            , [0x48,0xD3,0xFB])
-  , (sar rdx cl                             , "sar rdx, cl"
-                                            , [0x48,0xD3,0xFA])
-  , (sal r9 cl                              , "sal r9,      cl"
-                                            , [0x49,0xD3,0xE1])
-  , (sal r9 (I8 2)                          , "sal r9,      2"
-                                            , [0x49,0xC1,0xE1,0x02])
-
-  , (and_ rdx (rbp `derefOffset` 0)         , "and rdx,  [rbp]"
-                                            , [0x48,0x23,0x55,0x00])
-  , (and_ rdx rbx                           , "and rdx,  rbx"
-                                            , [0x48,0x21,0xDA])
-  , (and_ rdx (I32 9)                       , "and rdx,  9"
-                                            , [0x48,0x81,0xE2,0x09,0x00,0x00,0x00])
-  , (and_ rax (I32 9)                       , "and rax,  9"
-                                            , [0x48,0x25,0x09,0x00,0x00,0x00])
-  , (pop  rax                               , "pop rax"
-                                            , [0x58])
-
-  , (dec rsi                                , "dec rsi"
-                                            , [0x48,0xFF,0xCE])
-  , (dec r11                                , "dec r11"
-                                            , [0x49,0xFF,0xCB])
-  , (dec rax                                , "dec rax"
-                                            , [0x48,0xFF,0xC8])
-  , (mov r11 rsi                            , "mov r11, rsi"
-                                            , [0x49,0x89,0xF3])
-  , (add rsp (derefOffset r9 24)            , "add rsp, [r9+24]"
-                                            , [0x49,0x03,0x61,0x18])
-  , (add rax (derefOffset r9 24)            , "add rax, [r9+24]"
-                                            , [0x49,0x03,0x41,0x18])
-  , (mov (derefOffset rax 8) bl             , "mov [rax+8], bl"
-                                            , [0x88,0x58,0x08])
-  , (mov (derefOffset rsp 8) bl             , "mov [rsp+8], bl"
-                                            , [0x88,0x5C,0x24,0x08])
-  , (mov (derefOffset rsi 1) (I8 0xAB)      , "mov byte [rsi+1], 0xAB"
-                                            , [0xC6,0x46,0x01,0xAB])
-
-  , (setz bl                                , "setz bl" , [0x0F,0x94,0xC3])
-
--}
-
-spec :: Spec
-spec = do
-  spec_00050
-  spec_00100
+  it "xor rbx, rbx" $
+    encode (xor  rbx rbx)
+      `shouldBe` [0x48,0x31,0xDB]
+  it "xor rbx, rbx" $
+    encode (xor  rbx rbx)
+      `shouldBe` [0x48,0x31,0xDB]
+  it "xor rax, rbx" $
+    encode (xor  rax rbx)
+      `shouldBe` [0x48,0x31,0xD8]
+  it "xor rbx, rax" $
+    encode (xor  rbx rax)
+      `shouldBe` [0x48,0x31,0xC3]
+  it "xor rbx, rax" $
+    encode (xor  rbx rax)
+      `shouldBe` [0x48,0x31,0xC3]
+  it "xor rbx, r12" $
+    encode (xor  rbx r12)
+      `shouldBe` [0x4C,0x31,0xE3]
+  it "xor r12, rax" $
+    encode (xor  r12 rax)
+      `shouldBe` [0x49,0x31,0xC4]
+  it "push 0x33221100" $
+    encode (push (I32 0x33221100))
+      `shouldBe` [0x68,0x00,0x11,0x22,0x33]
+  it "inc rdx" $
+    encode (inc  rdx)
+      `shouldBe` [0x48,0xFF,0xC2]
+  it "inc rax" $
+    encode (inc  rax)
+      `shouldBe` [0x48,0xFF,0xC0]
+  it "inc r9" $
+    encode (inc  r9)
+      `shouldBe` [0x49,0xFF,0xC1]
+  it "test rax, rax" $
+    encode (test rax rax)
+      `shouldBe` [0x48,0x85,0xC0]
+  it "test rbx, rdx" $
+    encode (test rbx rdx)
+      `shouldBe` [0x48,0x85,0xD3]
+  it "test r9,  rdx" $
+    encode (test r9 rdx)
+      `shouldBe` [0x49,0x85,0xD1]
+  it "pop rbx" $
+    encode (pop  rbx)
+      `shouldBe` [0x5B]
+  it "pop r9" $
+    encode (pop  r9)
+      `shouldBe` [0x41,0x59]
+  it "ret" $
+    encode (ret)
+      `shouldBe` [0xC3]
+  it "call rbx" $
+    encode (call rbx)
+      `shouldBe` [0xFF,0xD3]
+  it "call rax" $
+    encode (call rax)
+      `shouldBe` [0xFF,0xD0]
+  it "call r9" $
+    encode (call r9)
+      `shouldBe` [0x41,0xFF,0xD1]
+  it "add rbx, rdx" $
+    encode (add  rbx rdx)
+      `shouldBe` [0x48,0x01,0xD3]
+  it "add rbx, r9" $
+    encode (add  rbx r9)
+      `shouldBe` [0x4C,0x01,0xCB]
+  it "add r9, rbx" $
+    encode (add  r9 rbx)
+      `shouldBe` [0x49,0x01,0xD9]
+  it "add r9, r9" $
+    encode (add  r9 r9)
+      `shouldBe` [0x4D,0x01,0xC9]
+  it "push rbp" $
+    encode (push rbp)
+      `shouldBe` [0x55]
+  it "push rax" $
+    encode (push rax)
+      `shouldBe` [0x50]
+  it "push r12" $
+    encode (push r12)
+      `shouldBe` [0x41,0x54]
+  it "sub rdx, 0x33221100" $
+    encode (sub rdx (I32 0x33221100))
+      `shouldBe` [0x48,0x81,0xEA,0x00,0x11,0x22,0x33]
+  it "add rdx, 0x33221100" $
+    encode (add rdx (I32 0x33221100))
+      `shouldBe` [0x48,0x81,0xC2,0x00,0x11,0x22,0x33]
+  it "add r8,  0x33221100" $
+    encode (add r8  (I32 0x33221100))
+      `shouldBe` [0x49,0x81,0xC0,0x00,0x11,0x22,0x33]
+  it "add rdx, [rbp]" $
+    encode (add rdx (rbp `derefOffset` 0))
+      `shouldBe` [0x48,0x03,0x55,0x00]
+  it "add rdx, [rbp - 128]" $
+    encode (add rdx (rbp `derefOffset` (-128)))
+      `shouldBe` [0x48,0x03,0x55,0x80]
+  it "add rdx, [rbp + 127]" $
+    encode (add rdx (rbp `derefOffset` 127))
+      `shouldBe` [0x48,0x03,0x55,0x7F]
+  it "sub rdx, [rbp]" $
+    encode (sub rdx (rbp `derefOffset` 0))
+      `shouldBe` [0x48,0x2B,0x55,0x00]
+  it "sub rdx, [rbp - 128]" $
+    encode (sub rdx (rbp `derefOffset` (-128)))
+      `shouldBe` [0x48,0x2B,0x55,0x80]
+  it "sub rdx, [rbp + 127]" $
+    encode (sub rdx (rbp `derefOffset` 127))
+      `shouldBe` [0x48,0x2B,0x55,0x7F]
+  it "sub rdx, rbx" $
+    encode (sub rdx rbx)
+      `shouldBe` [0x48,0x29,0xDA]
+  it "jmp [rbp]" $
+    encode (jmpPtrOffset8  rbp 0)
+      `shouldBe` [0xFF,0x65,0x00]
+  it "jmp [rdi + 1]" $
+    encode (jmpPtrOffset8  rdi 1)
+      `shouldBe` [0xFF,0x67,0x01]
+  it "jmp [r11 + 1]" $
+    encode (jmpPtrOffset8  r11 1)
+      `shouldBe` [0x41,0xFF,0x63,0x01]
+  it "mov [rdi - 128], rdx" $
+    encode (mov (rdi `derefOffset` (-128)) rdx)
+      `shouldBe` [0x48,0x89,0x57,0x80]
+  it "mov [rdi - 25600], rdx" $
+    encode (mov (rdi `derefOffset` (-25600)) rdx)
+      `shouldBe` [0x48,0x89,0x97,0x00,0x9C,0xFF,0xFF]
+  it "cmp rbx, 0x33221100" $
+    encode (cmp rbx (I32 0x33221100))
+      `shouldBe` [0x48,0x81,0xFB,0x00,0x11,0x22,0x33]
+  it "cmp rbx, rdx" $
+    encode (cmp rbx rdx)
+      `shouldBe` [0x48,0x39,0xD3]
+  it "cmp rax, 0" $
+    encode (cmp rax (I32 0))
+      `shouldBe` [0x48,0x3D,0x00,0x00,0x00,0x00]
+  it "mul rbx" $
+    encode (mul rbx)
+      `shouldBe` [0x48,0xF7,0xE3]
+  it "mul rax" $
+    encode (mul rax)
+      `shouldBe` [0x48,0xF7,0xE0]
+  it "mul r11" $
+    encode (mul r11)
+      `shouldBe` [0x49,0xF7,0xE3]
+  it "sub rax, 1" $
+    encode (sub rax (I32 1))
+      `shouldBe` [0x48,0x2D,0x01,0x00,0x00,0x00]
+  it "add rax, 1" $
+    encode (add rax (I32 1))
+      `shouldBe` [0x48,0x05,0x01,0x00,0x00,0x00]
+  it "jmp rax" $
+    encode (jmp rax)
+      `shouldBe` [0xFF,0xE0]
+  it "jmp rbx" $
+    encode (jmp rbx)
+      `shouldBe` [0xFF,0xE3]
+  it "jmp r10" $
+    encode (jmp r10)
+      `shouldBe` [0x41,0xFF,0xE2]
+  it "sal rax, 1" $
+    encode (sal rax (I8 1))
+      `shouldBe` [0x48,0xD1,0xE0]
+  it "sal rbx, 1" $
+    encode (sal rbx (I8 1))
+      `shouldBe` [0x48,0xD1,0xE3]
+  it "sal rbx, 2" $
+    encode (sal rbx (I8 2))
+      `shouldBe` [0x48,0xC1,0xE3,0x02]
+  it "sal rbx, cl" $
+    encode (sal rbx cl)
+      `shouldBe` [0x48,0xD3,0xE3]
+  it "sal rdx, cl" $
+    encode (sal rdx cl)
+      `shouldBe` [0x48,0xD3,0xE2]
+  it "sar rax, 1" $
+    encode (sar rax (I8 1))
+      `shouldBe` [0x48,0xD1,0xF8]
+  it "sar rbx, 1" $
+    encode (sar rbx (I8 1))
+      `shouldBe` [0x48,0xD1,0xFB]
+  it "sar rbx, 2" $
+    encode (sar rbx (I8 2))
+      `shouldBe` [0x48,0xC1,0xFB,02]
+  it "sar rbx, cl" $
+    encode (sar rbx cl)
+      `shouldBe` [0x48,0xD3,0xFB]
+  it "sar rdx, cl" $
+    encode (sar rdx cl)
+      `shouldBe` [0x48,0xD3,0xFA]
+  it "sal r9,      cl" $
+    encode (sal r9 cl)
+      `shouldBe` [0x49,0xD3,0xE1]
+  it "sal r9,      2" $
+    encode (sal r9 (I8 2))
+      `shouldBe` [0x49,0xC1,0xE1,0x02]
+  it "and rdx,  [rbp]" $
+    encode (and_ rdx (rbp `derefOffset` 0))
+      `shouldBe` [0x48,0x23,0x55,0x00]
+  it "and rdx,  rbx" $
+    encode (and_ rdx rbx)
+      `shouldBe` [0x48,0x21,0xDA]
+  it "and rdx,  9" $
+    encode (and_ rdx (I32 9))
+      `shouldBe` [0x48,0x81,0xE2,0x09,0x00,0x00,0x00]
+  it "and rax,  9" $
+    encode (and_ rax (I32 9))
+      `shouldBe` [0x48,0x25,0x09,0x00,0x00,0x00]
+  it "pop rax" $
+    encode (pop  rax)
+      `shouldBe` [0x58]
+  it "dec rsi" $
+    encode (dec rsi)
+      `shouldBe` [0x48,0xFF,0xCE]
+  it "dec r11" $
+    encode (dec r11)
+      `shouldBe` [0x49,0xFF,0xCB]
+  it "dec rax" $
+    encode (dec rax)
+      `shouldBe` [0x48,0xFF,0xC8]
+  it "mov r11, rsi" $
+    encode (mov r11 rsi)
+      `shouldBe` [0x49,0x89,0xF3]
+  it "add rsp, [r9+24]" $
+    encode (add rsp (derefOffset r9 24))
+      `shouldBe` [0x49,0x03,0x61,0x18]
+  it "add rax, [r9+24]" $
+    encode (add rax (derefOffset r9 24))
+      `shouldBe` [0x49,0x03,0x41,0x18]
+  it "mov [rax+8], bl" $
+    encode (mov (derefOffset rax 8) bl)
+      `shouldBe` [0x88,0x58,0x08]
+  it "mov [rsp+8], bl" $
+    encode (mov (derefOffset rsp 8) bl)
+      `shouldBe` [0x88,0x5C,0x24,0x08]
+  it "mov byte [rsi+1], 0xAB" $
+    encode (mov (derefOffset rsi 1) (I8 0xAB))
+      `shouldBe` [0xC6,0x46,0x01,0xAB]
+  it "setz bl" $
+    encode (setz bl)
+      `shouldBe` [0x0F,0x94,0xC3]
